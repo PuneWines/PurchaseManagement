@@ -766,7 +766,6 @@ export const PurchaseOrderPage: React.FC = () => {
       {columnVisibility.indentNumber && (
         <td className="px-6 py-4 font-medium">{indent.indentNumber}</td>
       )}
-      {/* Approval Date Column - Right after Indent Number */}
       {columnVisibility.approvalDate && (
         <td className="px-6 py-4">
           {indent.approvalDate
@@ -791,7 +790,11 @@ export const PurchaseOrderPage: React.FC = () => {
         <td className="px-6 py-4">{indent.closingStock}</td>
       )}
       {columnVisibility.reorderQuantityPcs && (
-        <td className="px-6 py-4">{indent.reorderQuantityPcs}</td>
+        <td className="px-6 py-4">
+          {indent.bottlesPerCase && indent.reorderQuantityBox 
+            ? indent.bottlesPerCase * indent.reorderQuantityBox 
+            : indent.reorderQuantityPcs || 0}
+        </td>
       )}
       {columnVisibility.approved && (
         <td className="px-6 py-4">
@@ -1191,7 +1194,7 @@ export const PurchaseOrderPage: React.FC = () => {
                       )}
                       {columnVisibility.reorderQuantityPcs && (
                         <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Reorder (Pcs)
+                         Total Quantity (Pcs)
                         </th>
                       )}
                       {columnVisibility.approved && (
