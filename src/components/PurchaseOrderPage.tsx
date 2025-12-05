@@ -248,7 +248,7 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
                         SHOP NAME
                       </th>
                       <th className="px-4 py-2 text-left border border-gray-300">
-                        QTY(PCS)
+                        Quantity (Pcs)
                       </th>
                       <th className="px-4 py-2 text-left border border-gray-300">
                         QTY (BOX)
@@ -284,7 +284,9 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
                           />
                         </td>
                         <td className="px-4 py-2 border border-gray-300">
-                          {i.reorderQuantityPcs}
+                          {i.bottlesPerCase && i.reorderQuantityBox
+                            ? i.bottlesPerCase * i.reorderQuantityBox
+                            : i.reorderQuantityPcs || 0}
                         </td>
                         <td className="px-4 py-2 border border-gray-300">
                           {i.reorderQuantityBox}
@@ -462,14 +464,14 @@ export const PurchaseOrderPage: React.FC = () => {
         const allowedShops =
           userShopRaw && userShopRaw.toLowerCase() !== "all"
             ? userShopRaw
-                .split(",")
-                .map((s) => s.trim().toLowerCase())
-                .filter(Boolean)
+              .split(",")
+              .map((s) => s.trim().toLowerCase())
+              .filter(Boolean)
             : null;
         const filtered = allowedShops
           ? (data as POIndentItem[]).filter((i: POIndentItem) =>
-              allowedShops.includes((i.shopName || "").trim().toLowerCase())
-            )
+            allowedShops.includes((i.shopName || "").trim().toLowerCase())
+          )
           : (data as POIndentItem[]);
         setIndents(filtered);
       } catch (err) {
@@ -791,19 +793,18 @@ export const PurchaseOrderPage: React.FC = () => {
       )}
       {columnVisibility.reorderQuantityPcs && (
         <td className="px-6 py-4">
-          {indent.bottlesPerCase && indent.reorderQuantityBox 
-            ? indent.bottlesPerCase * indent.reorderQuantityBox 
+          {indent.bottlesPerCase && indent.reorderQuantityBox
+            ? indent.bottlesPerCase * indent.reorderQuantityBox
             : indent.reorderQuantityPcs || 0}
         </td>
       )}
       {columnVisibility.approved && (
         <td className="px-6 py-4">
           <span
-            className={`px-2 py-1 text-xs rounded-full ${
-              indent.approved === "Yes"
+            className={`px-2 py-1 text-xs rounded-full ${indent.approved === "Yes"
                 ? "bg-green-100 text-green-800"
                 : "bg-yellow-100 text-yellow-800"
-            }`}
+              }`}
           >
             {indent.approved}
           </span>
@@ -824,11 +825,10 @@ export const PurchaseOrderPage: React.FC = () => {
       {columnVisibility.status && (
         <td className="px-6 py-4">
           <span
-            className={`px-2 py-1 text-xs rounded-full ${
-              indent.shopManagerStatus === "Approved"
+            className={`px-2 py-1 text-xs rounded-full ${indent.shopManagerStatus === "Approved"
                 ? "bg-green-100 text-green-800"
                 : "bg-gray-100 text-gray-800"
-            }`}
+              }`}
           >
             {indent.shopManagerStatus || "Pending"}
           </span>
@@ -933,21 +933,19 @@ export const PurchaseOrderPage: React.FC = () => {
             <nav className="flex space-x-8">
               <button
                 onClick={() => setActiveTab("pending")}
-                className={`py-2 border-b-2 font-medium text-sm ${
-                  activeTab === "pending"
+                className={`py-2 border-b-2 font-medium text-sm ${activeTab === "pending"
                     ? "border-green-500 text-green-600"
                     : "border-transparent text-gray-500 hover:text-gray-700"
-                }`}
+                  }`}
               >
                 Pending ({pendingIndents.length})
               </button>
               <button
                 onClick={() => setActiveTab("history")}
-                className={`py-2 border-b-2 font-medium text-sm ${
-                  activeTab === "history"
+                className={`py-2 border-b-2 font-medium text-sm ${activeTab === "history"
                     ? "border-green-500 text-green-600"
                     : "border-transparent text-gray-500 hover:text-gray-700"
-                }`}
+                  }`}
               >
                 History ({historyIndents.length})
               </button>
@@ -1047,10 +1045,10 @@ export const PurchaseOrderPage: React.FC = () => {
                 onChange={(e) =>
                   setFilterField(
                     e.target.value as
-                      | "itemName"
-                      | "shopName"
-                      | "traderName"
-                      | ""
+                    | "itemName"
+                    | "shopName"
+                    | "traderName"
+                    | ""
                   )
                 }
                 className="px-3 py-2 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -1063,13 +1061,12 @@ export const PurchaseOrderPage: React.FC = () => {
               {filterField && (
                 <input
                   type="text"
-                  placeholder={`Filter by ${
-                    filterField === "itemName"
+                  placeholder={`Filter by ${filterField === "itemName"
                       ? "Item"
                       : filterField === "shopName"
-                      ? "Shop"
-                      : "Trader"
-                  } Name`}
+                        ? "Shop"
+                        : "Trader"
+                    } Name`}
                   value={filterValue}
                   onChange={(e) => setFilterValue(e.target.value)}
                   className="px-3 py-2 w-40 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -1194,7 +1191,7 @@ export const PurchaseOrderPage: React.FC = () => {
                       )}
                       {columnVisibility.reorderQuantityPcs && (
                         <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                         Total Quantity (Pcs)
+                          Total Quantity (Pcs)
                         </th>
                       )}
                       {columnVisibility.approved && (
@@ -1249,11 +1246,11 @@ export const PurchaseOrderPage: React.FC = () => {
 
                 {(activeTab === "pending" ? pendingIndents : historyIndents)
                   .length === 0 && (
-                  <div className="py-12 text-center text-gray-500">
-                    No {activeTab === "pending" ? "approved indents" : "POs"}{" "}
-                    found
-                  </div>
-                )}
+                    <div className="py-12 text-center text-gray-500">
+                      No {activeTab === "pending" ? "approved indents" : "POs"}{" "}
+                      found
+                    </div>
+                  )}
               </div>
             </div>
           </div>
@@ -1280,11 +1277,10 @@ export const PurchaseOrderPage: React.FC = () => {
                         </div>
                       </div>
                       <span
-                        className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          indent.approved === "Yes"
+                        className={`px-2 py-1 text-xs font-medium rounded-full ${indent.approved === "Yes"
                             ? "bg-green-100 text-green-800"
                             : "bg-yellow-100 text-yellow-800"
-                        }`}
+                          }`}
                       >
                         {indent.approved}
                       </span>
@@ -1319,11 +1315,10 @@ export const PurchaseOrderPage: React.FC = () => {
                         <div className="text-xs text-gray-500">Status</div>
                         <div className="font-medium text-gray-900">
                           <span
-                            className={`px-2 py-1 text-xs font-medium rounded-full ${
-                              indent.shopManagerStatus === "Approved"
+                            className={`px-2 py-1 text-xs font-medium rounded-full ${indent.shopManagerStatus === "Approved"
                                 ? "bg-green-100 text-green-800"
                                 : "bg-gray-100 text-gray-800"
-                            }`}
+                              }`}
                           >
                             {indent.shopManagerStatus || "Pending"}
                           </span>
