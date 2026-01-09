@@ -328,6 +328,8 @@ export const CrossCheckPage: React.FC = () => {
 
   const pendingIndents = filterIndents(basePendingIndents);
   const historyIndents = filterIndents(baseHistoryIndents);
+  const currentIndents =
+    activeTab === "pending" ? pendingIndents : historyIndents;
 
   // -----------------------------------------------------------------
   // Calculate Difference
@@ -605,10 +607,6 @@ export const CrossCheckPage: React.FC = () => {
       </div>
     );
   }
-
-  // Correctly determine which list to display
-  const currentIndents =
-    activeTab === "pending" ? pendingIndents : historyIndents;
 
   return (
     <div className="p-4 min-h-screen bg-gray-50 md:p-6 w-full lg:w-[calc(100vw-279px)] overflow-hidden">

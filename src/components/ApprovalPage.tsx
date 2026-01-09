@@ -10,6 +10,8 @@ import {
 import { indentService } from "../services/indentService";
 import { storageUtils } from "../utils/storage";
 
+import { SuccessAnimation } from "./SuccessAnimation";
+
 // Helper to format timestamp as YYYY-MM-DD HH:mm:ss
 const formatTimestamp = (date: Date): string => {
   const day = String(date.getDate()).padStart(2, "0");
@@ -58,6 +60,7 @@ interface IndentItem {
   approvedBy?: string;
   status?: string;
   actualTimestamp1?: string;
+  _rowIndex?: number;
 }
 
 interface ColumnVisibility {
@@ -85,7 +88,8 @@ export const ApprovalPage: React.FC = () => {
   const [indents, setIndents] = useState<IndentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string>("");
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
 
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
   const [searchTerm, setSearchTerm] = useState("");
@@ -152,6 +156,13 @@ export const ApprovalPage: React.FC = () => {
     };
 
     fetchApprovalNames();
+
+    // Check for post-reload tab preference
+    const postReloadTab = sessionStorage.getItem('postReloadTab');
+    if (postReloadTab === 'history') {
+      setActiveTab('history');
+      sessionStorage.removeItem('postReloadTab');
+    }
   }, []);
 
   useEffect(() => {
@@ -235,6 +246,9 @@ export const ApprovalPage: React.FC = () => {
     setShowModal(true);
   };
 
+  const getIndentKey = (indent: IndentItem) =>
+    `${indent.indentNumber}|${indent.skuCode}|${indent.itemName}`;
+
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -246,9 +260,9 @@ export const ApprovalPage: React.FC = () => {
 
   const toggleSelectAllVisible = () => {
     setSelectedIds((prev) => {
-      const allVisible = new Set(filteredIndents.map((i) => i.indentNumber));
+      const allVisible = new Set(filteredIndents.map(getIndentKey));
       const allSelected = filteredIndents.every((i) =>
-        prev.has(i.indentNumber)
+        prev.has(getIndentKey(i))
       );
       if (allSelected) {
         const next = new Set(prev);
@@ -263,13 +277,21 @@ export const ApprovalPage: React.FC = () => {
 
   const handleBulkApprove = async () => {
     if (selectedIds.size === 0) return;
+
     if (!selectedApprovalName) {
       setError("Please select an approval name");
       setTimeout(() => setError(""), 3000);
       return;
     }
+
+    setIsApproving(true); // 🔒 lock UI
+
     const currentDate = formatTimestamp(new Date());
-    const ids = Array.from(selectedIds);
+
+    const itemsToApprove = indents.filter((indent) =>
+      selectedIds.has(getIndentKey(indent))
+    );
+
     const updates = {
       shopManagerStatus: "Approved",
       remarks: "",
@@ -278,35 +300,54 @@ export const ApprovalPage: React.FC = () => {
       approvedBy: selectedApprovalName,
       status: "approved",
       actualTimestamp1: currentDate,
-    } as const;
+    };
 
-    const updatedIndents = indents.map((indent) =>
-      ids.includes(indent.indentNumber) ? { ...indent, ...updates } : indent
-    );
-    setIndents(updatedIndents);
+    // Store previous state for rollback
+    const itemsApprovingKeys = Array.from(selectedIds);
+
     try {
+      // ⏳ Sheet writes FIRST
       await Promise.all(
-        ids.map((indentNumber) =>
-          indentService.updateIndent(indentNumber, {
-            ...updates,
-            shopName:
-              indents.find((i) => i.indentNumber === indentNumber)?.shopName ||
-              "",
-            isApproval: true,
-            indentNumber,
-          })
+        itemsToApprove.map((item) =>
+          indentService.updateIndent(
+            item.indentNumber,
+            {
+              ...updates,
+              shopName: item.shopName,
+              isApproval: true,
+              indentNumber: item.indentNumber,
+            },
+            {
+              skuCode: item.skuCode,
+              itemName: item.itemName,
+            },
+            item._rowIndex
+          )
         )
       );
-      setSuccessMessage(
-        `Approved ${ids.length} indent${
-          ids.length > 1 ? "s" : ""
-        } successfully!`
+
+      // ✅ ONLY after successful sheet write, update UI and show animation
+      setIndents((prev) =>
+        prev.map((indent) =>
+          selectedIds.has(getIndentKey(indent))
+            ? { ...indent, ...updates }
+            : indent
+        )
       );
-      setTimeout(() => setSuccessMessage(""), 3000);
+
       setSelectedIds(new Set());
-    } catch (e) {
-      setError("Failed to approve selected indents. Please try again.");
+      setShowSuccessAnimation(true);
+      setActiveTab("history");
+
+    } catch (error) {
+      console.error("Bulk approval failed:", error);
+      // Show error but don't need to revert since we didn't update setIndents optimistically
+      setSelectedIds(new Set(itemsApprovingKeys));
+      
+      setError("Failed to approve. Sheet update did not complete.");
       setTimeout(() => setError(""), 5000);
+    } finally {
+      setIsApproving(false);
     }
   };
 
@@ -319,13 +360,15 @@ export const ApprovalPage: React.FC = () => {
         return;
       }
 
-      // Optimistic update: Update local state immediately
+      setIsApproving(true);
+      setError("");
+
       const currentDate = formatTimestamp(new Date());
       const updates = {
         shopManagerStatus,
         remarks,
         approvalDate: currentDate,
-        approvalName: selectedApprovalName, // This will be saved to column AQ
+        approvalName: selectedApprovalName,
         approvedBy: selectedApprovalName,
         status:
           shopManagerStatus.toLowerCase() === "approved"
@@ -334,78 +377,47 @@ export const ApprovalPage: React.FC = () => {
         actualTimestamp1: currentDate,
       };
 
-      console.log("Submitting approval with updates:", updates);
-
-      const updatedIndents = indents.map((indent) =>
-        indent.indentNumber === selectedIndent.indentNumber
-          ? {
-              ...indent,
-              ...updates,
-            }
-          : indent
-      );
-      setIndents(updatedIndents);
-      setShowModal(false);
-      setSelectedIndent(null);
-      setShopManagerStatus("Approved");
-      setRemarks("");
-      setSelectedApprovalName(approvalNames[0] || "");
-
-      // Show success message immediately
-      const action =
-        shopManagerStatus.toLowerCase() === "approved"
-          ? "approved"
-          : "rejected";
-      setSuccessMessage(
-        `Indent ${selectedIndent.indentNumber} has been ${action} successfully!`
-      );
-      setTimeout(() => setSuccessMessage(""), 3000);
-
-      // Perform API call in background
+      // Perform API call
       try {
         // Update backend with all necessary fields
         await indentService.updateIndent(selectedIndent.indentNumber, {
-          shopManagerStatus,
-          remarks,
-          approvalDate: currentDate,
-          approvalName: selectedApprovalName,
-          approvedBy: selectedApprovalName,
-          status:
-            shopManagerStatus.toLowerCase() === "approved"
-              ? "approved"
-              : "rejected",
+          ...updates,
           shopName: selectedIndent.shopName,
           isApproval: true,
-          actualTimestamp1: currentDate,
-          indentNumber: selectedIndent.indentNumber, // Ensure indent number is included
+          indentNumber: selectedIndent.indentNumber,
         });
 
-        // Update completed successfully - keep optimistic update
+        // Update completed successfully - NOW update UI
         console.log("Approval submitted successfully");
 
-        // Automatically refresh page after successful submission to reload updated data
-        setTimeout(() => {
-          window.location.reload();
-        }, 100); // 0.1 second delay for faster feedback
-      } catch (error) {
-        // Revert optimistic update on failure
-        const revertedIndents = indents.map((indent) =>
+        const updatedIndents = indents.map((indent) =>
           indent.indentNumber === selectedIndent.indentNumber
             ? {
                 ...indent,
-                shopManagerStatus: indent.shopManagerStatus || "",
-                remarks: indent.remarks || "",
-                approvalDate: indent.approvalDate || "",
-                approvedBy: indent.approvedBy || "",
-                status: indent.status || "",
+                ...updates,
               }
             : indent
         );
-        setIndents(revertedIndents);
-        setSuccessMessage(""); // Clear success message
-        // Optionally show error message
+        setIndents(updatedIndents);
+        setShowModal(false);
+        setSelectedIndent(null);
+        setShopManagerStatus("Approved");
+        setRemarks("");
+        setSelectedApprovalName(approvalNames[0] || "");
+
+        // Show animation and switch tab
+        setShowSuccessAnimation(true);
+        setActiveTab("history");
+
+        // Automatically refresh page after successful submission to reload updated data
+        setTimeout(() => {
+        }, 100); // 0.1 second delay for faster feedback
+      } catch (error) {
+        console.error("Single approval failed:", error);
         setError("Failed to update approval. Please try again.");
         setTimeout(() => setError(""), 5000);
+      } finally {
+        setIsApproving(false);
       }
     }
   };
@@ -429,6 +441,7 @@ export const ApprovalPage: React.FC = () => {
       setFilterOptions([]);
     }
   }, [filterField, indents]);
+
 
   // Filter indents based on tab
   // Only show items that have plannedDate (are in the approval process)
@@ -597,34 +610,6 @@ export const ApprovalPage: React.FC = () => {
         </div>
       )}
 
-      {/* Success */}
-      {successMessage && (
-        <div className="p-4 mb-6 bg-green-50 rounded-lg border border-green-200">
-          <div className="flex">
-            <div className="flex-shrink-0">
-              <svg
-                className="w-5 h-5 text-green-400"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </div>
-            <div className="ml-3">
-              <h3 className="text-sm font-medium text-green-800">
-                Approval Successful
-              </h3>
-              <div className="mt-2 text-sm text-green-700">
-                <p>{successMessage}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Main content – only when NOT loading & NOT error */}
       {!loading && !error && (
@@ -713,14 +698,14 @@ export const ApprovalPage: React.FC = () => {
               {activeTab === "pending" && (
                 <button
                   onClick={handleBulkApprove}
-                  disabled={selectedIds.size === 0}
+                  disabled={selectedIds.size === 0 || isApproving}
                   className={`px-4 py-2 text-sm rounded-lg ${
-                    selectedIds.size === 0
+                    selectedIds.size === 0 || isApproving
                       ? "bg-gray-300 text-gray-600 cursor-not-allowed"
                       : "bg-green-600 text-white hover:bg-green-700"
                   }`}
                 >
-                  Approve
+                  {isApproving ? "Saving..." : "Approve"}
                 </button>
               )}
               <div className="relative">
@@ -778,12 +763,12 @@ export const ApprovalPage: React.FC = () => {
                   {filterOptions.length > 0 && (
                     <div className="overflow-auto absolute z-10 mt-1 w-full max-h-60 bg-white rounded-lg border border-gray-200 shadow-lg">
                       {filterOptions
-                        .filter((option) =>
+                        .filter((option: string) =>
                           option
                             .toLowerCase()
                             .includes(filterSearch.toLowerCase())
                         )
-                        .map((option) => (
+                        .map((option: string) => (
                           <div
                             key={option}
                             className={`px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 ${
@@ -901,13 +886,14 @@ export const ApprovalPage: React.FC = () => {
                     <tr>
                       {activeTab === "pending" && (
                         <th className="px-3 py-3 text-left">
+
                           <input
                             type="checkbox"
                             onChange={toggleSelectAllVisible}
                             checked={
                               filteredIndents.length > 0 &&
                               filteredIndents.every((i) =>
-                                selectedIds.has(i.indentNumber)
+                                selectedIds.has(getIndentKey(i))
                               )
                             }
                           />
@@ -930,12 +916,12 @@ export const ApprovalPage: React.FC = () => {
                         </th>
                       )}
                       {columnVisibility.itemName && (
-                        <th className="px-4 py-3 font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
+                        <th className="px-4 py-3 min-w-[200px] font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
                           Item Name
                         </th>
                       )}
                       {columnVisibility.brandName && (
-                        <th className="px-4 py-3 font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
+                        <th className="px-4 py-3 min-w-[150px] font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
                           Brand Name
                         </th>
                       )}
@@ -965,7 +951,7 @@ export const ApprovalPage: React.FC = () => {
                         </th>
                       )}
                       {columnVisibility.traderName && (
-                        <th className="px-4 py-3 font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
+                        <th className="px-4 py-3 min-w-[150px] font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
                           Trader Name
                         </th>
                       )}
@@ -995,12 +981,12 @@ export const ApprovalPage: React.FC = () => {
                         </th>
                       )}
                       {columnVisibility.shopName && (
-                        <th className="px-4 py-3 font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
+                        <th className="px-4 py-3 min-w-[150px] font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
                           Shop Name
                         </th>
                       )}
                       {columnVisibility.orderBy && (
-                        <th className="px-4 py-3 font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
+                        <th className="px-4 py-3 min-w-[150px] font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
                           Order By
                         </th>
                       )}
@@ -1012,7 +998,7 @@ export const ApprovalPage: React.FC = () => {
                           <th className="px-4 py-3 font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
                             Approval Date
                           </th>
-                          <th className="px-4 py-3 font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
+                          <th className="px-4 py-3 min-w-[200px] font-semibold tracking-wider text-left text-gray-700 uppercase whitespace-nowrap">
                             Remarks
                           </th>
                         </>
@@ -1030,9 +1016,9 @@ export const ApprovalPage: React.FC = () => {
                             <td className="px-3 py-4 whitespace-nowrap">
                               <input
                                 type="checkbox"
-                                checked={selectedIds.has(indent.indentNumber)}
+                                checked={selectedIds.has(getIndentKey(indent))}
                                 onChange={() =>
-                                  toggleSelect(indent.indentNumber)
+                                  toggleSelect(getIndentKey(indent))
                                 }
                               />
                             </td>
@@ -1058,12 +1044,12 @@ export const ApprovalPage: React.FC = () => {
                             </td>
                           )}
                           {columnVisibility.itemName && (
-                            <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
+                            <td className="px-4 py-4 min-w-[200px] text-gray-600 whitespace-nowrap">
                               {indent.itemName}
                             </td>
                           )}
                           {columnVisibility.brandName && (
-                            <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
+                            <td className="px-4 py-4 min-w-[150px] text-gray-600 whitespace-nowrap">
                               {indent.brandName}
                             </td>
                           )}
@@ -1101,7 +1087,7 @@ export const ApprovalPage: React.FC = () => {
                             </td>
                           )}
                           {columnVisibility.traderName && (
-                            <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
+                            <td className="px-4 py-4 min-w-[150px] text-gray-600 whitespace-nowrap">
                               {indent.traderName || "-"}
                             </td>
                           )}
@@ -1131,12 +1117,12 @@ export const ApprovalPage: React.FC = () => {
                             </td>
                           )}
                           {columnVisibility.shopName && (
-                            <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
+                            <td className="px-4 py-4 min-w-[150px] text-gray-600 whitespace-nowrap">
                               {indent.shopName}
                             </td>
                           )}
                           {columnVisibility.orderBy && (
-                            <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
+                            <td className="px-4 py-4 min-w-[150px] text-gray-600 whitespace-nowrap">
                               {indent.orderBy}
                             </td>
                           )}
@@ -1160,7 +1146,7 @@ export const ApprovalPage: React.FC = () => {
                                     ).toLocaleDateString()
                                   : "-"}
                               </td>
-                              <td className="px-4 py-4 max-w-xs text-gray-600 truncate">
+                              <td className="px-4 py-4 min-w-[200px] max-w-xs text-gray-600 truncate">
                                 {indent.remarks || "-"}
                               </td>
                             </>
@@ -1475,15 +1461,34 @@ export const ApprovalPage: React.FC = () => {
               </button>
               <button
                 onClick={handleSaveApproval}
-                className="flex gap-2 justify-center items-center px-6 py-2 w-full font-medium text-white bg-blue-600 rounded-lg transition-colors duration-200 sm:w-auto hover:bg-blue-700"
+                disabled={isApproving}
+                className={`flex gap-2 justify-center items-center px-6 py-2 w-full font-medium text-white rounded-lg transition-colors duration-200 sm:w-auto ${
+                  isApproving 
+                    ? "bg-gray-400 cursor-not-allowed" 
+                    : "bg-blue-600 hover:bg-blue-700"
+                }`}
               >
-                <CheckCircle className="w-4 h-4" />
-                Save
+                {isApproving ? (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-white animate-spin border-t-transparent" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    Save
+                  </>
+                )}
               </button>
             </div>
           </div>
         </div>
       )}
+      <SuccessAnimation
+         visible={showSuccessAnimation}
+         message="Approved Successfully!"
+         onComplete={() => setShowSuccessAnimation(false)}
+      />
     </div>
   );
 };

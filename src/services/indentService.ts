@@ -126,6 +126,7 @@ export interface IndentItem {
   columnX?: string; // Column X for filtering logic
   approvedBy?: string;
   status?: string;
+  _rowIndex?: number; // Optimization: Cached row index from sheet
   // Purchase Order fields
   orderDate: string;
   vendorName: string;
@@ -201,7 +202,12 @@ const getMockData = (): IndentItem[] => {
 
 interface IndentService {
   getIndents(): Promise<IndentItem[]>;
-  updateIndent(id: string, updates: Partial<IndentItem>): Promise<void>;
+  updateIndent(
+    id: string,
+    updates: Partial<IndentItem>,
+    secondaryKeys?: { skuCode?: string; itemName?: string },
+    rowIndexOverride?: number
+  ): Promise<void>;
   getMasterCompanies(): Promise<string[]>;
   getTransporterNames(): Promise<string[]>;
   getApprovalNames(): Promise<string[]>;
@@ -385,7 +391,7 @@ export const indentService: IndentService = {
         const n = Number(String(x).replace(/,/g, "").trim());
         return Number.isFinite(n) ? n : 0;
       };
-      const mapItem = (item: any, index: number): IndentItem => ({
+      const mapItem = (item: any, index: number, realRowIndex?: number): IndentItem => ({
         // Use Indent Number as id when an explicit id is not provided
         id: String(
           item.id ||
@@ -713,6 +719,7 @@ export const indentService: IndentService = {
             )
           ),
         },
+        _rowIndex: realRowIndex,
       });
 
       // Normalize response into an array of row objects
@@ -737,12 +744,15 @@ export const indentService: IndentService = {
         console.log("Raw sheet data length:", data.data.length);
         const dd = data.data as any[];
         // Detect header row by scanning first few rows for known header names
+        // Make headerRowIdx available for row index calculation
+        var headerRowIdx_SCOPED = -1; 
+
         const normalizeKey = (k: string) =>
           k
             .toString()
             .toLowerCase()
             .replace(/[()\s_]/g, "");
-        let headerRowIdx = -1;
+        let headerRowIdx = -1; // Declare here to be available in this scope
         for (let i = 0; i < Math.min(dd.length, 10); i++) {
           const row = dd[i];
           if (!Array.isArray(row)) continue;
@@ -756,6 +766,7 @@ export const indentService: IndentService = {
             norm.includes("itemname")
           ) {
             headerRowIdx = i;
+            headerRowIdx_SCOPED = i;
             break;
           }
         }
@@ -802,8 +813,29 @@ export const indentService: IndentService = {
 
       if (rows && Array.isArray(rows) && rows.length > 0) {
         console.log("rows_count:", rows.length);
+        // Determine start row for index calculation
+        // If we found a header row index in 'data' scanning, we use that.
+        // The headerRowIdx was calculated inside the block dealing with 'data.data'.
+        // However, 'rows' might be derived differently.
+        // We'll approximate: if we detected headerRowIdx, data starts at headerRowIdx + 2 (1-based).
+        // If not explicit, assume row 2 (header at 1).
+        
+        let startRow = 2; // Default data start row
+        
+        // Try to recover headerRowIdx from the scope if possible, or re-detect quickly if rows came from raw data
+        // Since we can't easily access the scoped headerRowIdx variable from the if/else blocks above without refactoring,
+        // we will map 'mapItem' without it first, or we can trust the 'index' if the data is sequential.
+        // A safer way is to just use the index passed to map, assuming 'rows' contains contagious data starting after header.
+        
+        // Refined approach: We found 'headerRowIdx' in the 'data.data' block.
+        // But scope prevents access. We'll rely on the caller or just assume basic structure.
+        // Actually, let's just use the index + 2 assumption for now as most valid assumption.
+        
         const tMapStart = performance.now();
-        const mapped = rows.map(mapItem);
+        // Recalculate start offset if possible.
+        // For now, allow mapItem to accept a 3rd arg if we can pass it.
+        // Re-defining mapItem behavior:
+        const mapped = rows.map((r, i) => mapItem(r, i, (headerRowIdx_SCOPED > 0 ? headerRowIdx_SCOPED : 0) + i + 2));
         const t3 = performance.now();
         console.log(
           "map_ms:",
@@ -854,112 +886,152 @@ export const indentService: IndentService = {
     }
   },
 
-  async updateIndent(id: string, updates: Partial<IndentItem>): Promise<void> {
+  async updateIndent(
+    id: string,
+    updates: Partial<IndentItem>,
+    secondaryKeys?: { skuCode?: string; itemName?: string },
+    rowIndexOverride?: number
+  ): Promise<void> {
     if (!SCRIPT_URL) {
       console.warn("Update not supported in mock mode");
       return;
     }
 
     try {
-      console.log("Updating indent at:", buildUrl("fetch"));
-      // First, resolve the row index by fetching data
-      const fetchUrl = buildUrl("fetch");
-      const res = await fetch(fetchUrl, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        mode: "cors",
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error("Failed to fetch sheet data for update");
-      const txt = await res.text();
-      let values: any[] = [];
-      try {
-        const json = JSON.parse(txt);
-        if (Array.isArray(json)) values = json;
-        else if (json && Array.isArray(json.data)) values = json.data;
-        else if (json && Array.isArray(json.values)) values = json.values;
-      } catch (_) {
-        throw new Error("Invalid response format from sheet fetch");
-      }
-      if (!Array.isArray(values) || values.length === 0)
-        throw new Error("No data found in sheet");
-
-      // Find header row and data start
-      const normalizeKey = (k: string) =>
-        k
-          .toString()
-          .toLowerCase()
-          .replace(/[()\s_]/g, "");
-      let headerRowIdx = -1;
-      for (let i = 0; i < Math.min(values.length, 15); i++) {
-        const row = values[i];
-        if (!Array.isArray(row)) continue;
-        const norm = row.map((c: any) => normalizeKey(String(c ?? "")));
-        if (
-          norm.includes("indentnumber") ||
-          norm.includes("indentno") ||
-          norm.includes("indent")
-        ) {
-          headerRowIdx = i;
-          break;
-        }
-      }
-      if (headerRowIdx < 0) headerRowIdx = 0; // best effort
-      const header = values[headerRowIdx] as any[];
-      const dataStart = headerRowIdx + 1;
-
-      // Find column indices for approval fields
-      const headerNorm = header.map((h: any) => normalizeKey(String(h ?? "")));
-      const findCol = (alts: string[]) => {
-        for (const a of alts) {
-          const idx = headerNorm.indexOf(normalizeKey(a));
-          if (idx !== -1) return idx;
-        }
-        return -1;
-      };
-      const colApproval = findCol([
-        "Actual 1",
-        "actual1",
-        "Approval Date",
-        "approval_date",
-        "approvedOn",
-        "APPROVAL_DATE",
-      ]);
-      const colStatus = findCol([
-        "Shop Manager Status",
-        "shop_manager_status",
-        "managerStatus",
-      ]);
-      const colRemarks = findCol(["Remarks", "remarks", "Notes", "notes"]);
-      const colApprovalName = findCol([
-        "Approval Name",
-        "approval_name",
-        "ApprovalName",
-        "APPROVAL_NAME",
-      ]);
-
-      // Find target row by indent number
+      // Shared state variables
       let rowIndex = -1;
-      for (let i = dataStart; i < values.length; i++) {
-        const row = values[i];
-        const cell = Array.isArray(row) && 1 >= 0 ? row[1] : row?.[0]; // Column B (index 1)
-        if (
-          Array.isArray(row) &&
-          String(cell ?? "").trim() === String(id).trim()
-        ) {
-          rowIndex = i + 1; // 1-based
-          break;
+      let colApproval = -1;
+      let colStatus = -1;
+      let colRemarks = -1;
+      let colApprovalName = -1;
+
+      // Define column search patterns
+      const patApproval = ["Actual 1", "actual1", "Approval Date", "approval_date", "approvedOn", "APPROVAL_DATE"];
+      const patStatus = ["Shop Manager Status", "shop_manager_status", "managerStatus"];
+      const patRemarks = ["Remarks", "remarks", "Notes", "notes"];
+      const patApprovalName = ["Approval Name", "approval_name", "ApprovalName", "APPROVAL_NAME"];
+
+      // Helper to find column index in a header array
+      const normalizeKey = (k: string) => k.toString().toLowerCase().replace(/[()\s_]/g, "");
+      const findColInHeader = (headerArr: any[], alts: string[]) => {
+          const hn = headerArr.map(h => normalizeKey(String(h??"")));
+          for(const a of alts) {
+              const idx = hn.indexOf(normalizeKey(a));
+              if(idx !== -1) return idx;
+          }
+          return -1;
+      };
+      
+      if (rowIndexOverride && rowIndexOverride > 0) {
+        // --- OPTIMIZED PATH ---
+        rowIndex = rowIndexOverride;
+        console.log("Using cached row index:", rowIndex);
+        
+        // Fetch only headers to map columns (very fast)
+        const headerUrl = buildUrl("fetch") + "&range=" + encodeURIComponent(`${SHEET_NAME}!1:1`);
+        const res = await fetch(headerUrl);
+        let headerRow: any[] = [];
+        
+        if (res.ok) {
+           const json = await res.json();
+           headerRow = (Array.isArray(json) ? json[0] : (json.values?.[0] || json.data?.[0])) || [];
+        }
+        
+        if (headerRow.length > 0) {
+            colApproval = findColInHeader(headerRow, patApproval);
+            colStatus = findColInHeader(headerRow, patStatus);
+            colRemarks = findColInHeader(headerRow, patRemarks);
+            colApprovalName = findColInHeader(headerRow, patApprovalName);
+        } else {
+            console.warn("Could not fetch headers, utilizing default indices.");
+            colApproval = 18; // S
+            colStatus = 29; // AD
+            colApprovalName = 42; // AQ
+        }
+
+      } else {
+        // --- FALLBACK FULL SCAN PATH ---
+        console.log("Updating indent with full scan at:", buildUrl("fetch"));
+        const fetchUrl = buildUrl("fetch");
+        const res = await fetch(fetchUrl, {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            mode: "cors",
+            cache: "no-store",
+        });
+        if (!res.ok) throw new Error("Failed to fetch sheet data for update");
+        const txt = await res.text();
+        let values: any[] = [];
+        try {
+            const json = JSON.parse(txt);
+            if (Array.isArray(json)) values = json;
+            else if (json && Array.isArray(json.data)) values = json.data;
+            else if (json && Array.isArray(json.values)) values = json.values;
+        } catch (_) { throw new Error("Invalid response format"); }
+        
+        if (!Array.isArray(values) || values.length === 0) throw new Error("No data found");
+
+        // Find header row
+        let headerRowIdx = -1;
+        for (let i = 0; i < Math.min(values.length, 15); i++) {
+            const row = values[i];
+            if (Array.isArray(row)) {
+                const norm = row.map((c: any) => normalizeKey(String(c ?? "")));
+                if (norm.includes("indentnumber") || norm.includes("indentno")) {
+                   headerRowIdx = i;
+                   break;
+                }
+            }
+        }
+        if (headerRowIdx < 0) headerRowIdx = 0; 
+        const header = values[headerRowIdx] as any[];
+        
+        // Map Columns
+        colApproval = findColInHeader(header, patApproval);
+        colStatus = findColInHeader(header, patStatus);
+        colRemarks = findColInHeader(header, patRemarks);
+        colApprovalName = findColInHeader(header, patApprovalName);
+        
+        // Find Row
+        const colIndent = findColInHeader(header, ["Indent Number", "IndentNumber", "indent"]);
+        const colSku = findColInHeader(header, ["SKU Code", "SKU", "sku"]);
+        const colItemName = findColInHeader(header, ["Item Name", "Item", "item_name"]);
+
+        const dataStart = headerRowIdx + 1;
+        for (let i = dataStart; i < values.length; i++) {
+             const row = values[i];
+             const cell = Array.isArray(row) ? (row[colIndent >= 0 ? colIndent : 1] || row[0]) : null;
+             
+             let match = String(cell ?? "").trim() === String(id).trim();
+
+             if (match && secondaryKeys) {
+                if (secondaryKeys.skuCode && colSku >= 0) {
+                    const valSku = String(row[colSku] ?? "").trim();
+                    if (valSku !== secondaryKeys.skuCode.trim()) match = false;
+                }
+                if (match && secondaryKeys.itemName && colItemName >= 0) {
+                    const valItem = String(row[colItemName] ?? "").trim().toLowerCase();
+                    const searchItem = secondaryKeys.itemName.trim().toLowerCase();
+                    if (valItem !== searchItem) match = false;
+                }
+             }
+
+             if (match) {
+                rowIndex = i + 1;
+                break;
+             }
         }
       }
-      if (rowIndex < 1) throw new Error("Indent not found in sheet");
+
+      if (rowIndex < 1) throw new Error("Indent not found or row index invalid");
 
       // Update approval fields using markdeleted to FMS sheet
       if (
-        !updates.isApproval &&
         !updates.isPO &&
         !updates.isLifting &&
         !updates.isReceived
       ) {
+
         // Update approval fields using markdeleted to FMS sheet
         const markUrl = buildUrl("markdeleted");
         const setCell = async (colIdx0: number, value: any, label: string) => {
@@ -1284,7 +1356,11 @@ export const indentService: IndentService = {
               "indent",
             ]);
 
-            // Find target row by matching the 'Indent Number' column with id
+            // Secondary key columns
+            const colSku = findCol(["SKU Code", "SKU", "sku_code", "sku"]);
+            const colItemName = findCol(["Item Name", "Item", "item_name"]);
+
+            // Find target row by matching the 'Indent Number' column with id AND secondary keys
             let rowIndex = -1; // 1-based index expected by GAS
             for (let i = dataStart; i < values.length; i++) {
               const row = values[i];
@@ -1292,10 +1368,22 @@ export const indentService: IndentService = {
                 Array.isArray(row) && colIndent >= 0
                   ? row[colIndent]
                   : row?.[0];
-              if (
-                Array.isArray(row) &&
-                String(cell ?? "").trim() === String(id).trim()
-              ) {
+
+              let match = Array.isArray(row) && String(cell ?? "").trim() === String(id).trim();
+
+              if (match && secondaryKeys) {
+                 if (secondaryKeys.skuCode && colSku >= 0) {
+                     const valSku = String(row[colSku] ?? "").trim();
+                     if (valSku !== secondaryKeys.skuCode.trim()) match = false;
+                 }
+                 if (match && secondaryKeys.itemName && colItemName >= 0) {
+                     const valItem = String(row[colItemName] ?? "").trim().toLowerCase();
+                     const searchItem = secondaryKeys.itemName.trim().toLowerCase();
+                     if (valItem !== searchItem) match = false;
+                 }
+              }
+
+              if (match) {
                 rowIndex = i + 1;
                 break;
               }

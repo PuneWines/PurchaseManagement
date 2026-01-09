@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { indentService } from "../services/indentService";
 import { storageUtils } from "../utils/storage";
 import { generatePOPDF } from "../utils/pdfGenerator";
+import { SuccessAnimation } from "./SuccessAnimation";
 
 // Helper to format timestamp as DD/MM/YYYY HH:mm:ss
 const formatTimestamp = (date: Date): string => {
@@ -47,6 +48,7 @@ interface POIndentItem {
   actualTimestamp1?: string;
   actualTimestamp2?: string;
   actualTimestamp3?: string;
+  _rowIndex?: number;
 }
 
 interface ColumnVisibility {
@@ -79,6 +81,7 @@ interface POGenerateModalProps {
     companyName: string
   ) => void;
   indents: POIndentItem[];
+  isSubmitting?: boolean;
 }
 
 const POGenerateModal: React.FC<POGenerateModalProps> = ({
@@ -86,6 +89,7 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
   onClose,
   onConfirm,
   indents,
+  isSubmitting = false,
 }) => {
   const today = new Date();
 
@@ -117,9 +121,7 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
 
   const [tradeName, setTradeName] = useState(indent.traderName || "");
 
-  const [masterCompanies, setMasterCompanies] = useState<string[]>([
-    "THE LIQUOR STORY",
-  ]);
+
   const [transporterNames, setTransporterNames] = useState<string[]>([
     "wait loading",
   ]);
@@ -129,11 +131,7 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
   useEffect(() => {
     const fetchMaster = async () => {
       try {
-        const [masterData, transporters] = await Promise.all([
-          indentService.getMasterCompanies(),
-          indentService.getTransporterNames(),
-        ]);
-        setMasterCompanies(masterData);
+        const transporters = await indentService.getTransporterNames();
         setTransporterNames(transporters);
         console.log("Fetched transporterNames:", transporters);
       } catch (error) {
@@ -181,22 +179,19 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
       ? [indent, ...visibleTraderIndents]
       : visibleTraderIndents;
 
+  const uniqueShopNames = Array.from(
+    new Set(finalVisibleIndents.map((i) => i.shopName?.trim()).filter(Boolean))
+  );
+  const displayHeader = uniqueShopNames.length > 0 ? uniqueShopNames.join(" | ") : (companyName || indent.shopName);
+
   return (
     <div className="flex overflow-y-auto fixed inset-0 z-50 justify-center items-center p-2 bg-black bg-opacity-50 sm:p-4">
       <div className="relative w-full max-w-4xl bg-white rounded-xl shadow-2xl max-h-[95vh] overflow-y-auto print:max-w-none print:shadow-none">
         <div className="p-3 sm:p-6 print:p-0">
           <header className="mb-4 sm:mb-8 text-center bg-[#1a2a44] py-4 sm:py-6 text-white print:bg-[#1a2a44]">
-            <select
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              className="text-lg sm:text-2xl font-bold text-white bg-transparent border-none outline-none [&>option]:text-black w-full sm:w-auto px-2 text-center"
-            >
-              {masterCompanies.map((name: string) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
+            <h2 className="text-lg sm:text-2xl font-bold text-white">
+              {displayHeader}
+            </h2>
           </header>
 
           {/* Top Row */}
@@ -363,10 +358,21 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
                     companyName
                   )
                 }
-                disabled={!transporterName.trim()}
-                className="px-6 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!transporterName.trim() || isSubmitting}
+                className={`px-6 py-2 text-white rounded-lg transition-colors flex items-center gap-2 ${
+                  !transporterName.trim() || isSubmitting
+                    ? "bg-gray-400 cursor-not-allowed text-gray-700"
+                    : "bg-green-600 hover:bg-green-700"
+                }`}
               >
-                Generate & Send PO
+                {isSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-white animate-spin border-t-transparent" />
+                    Saving...
+                  </>
+                ) : (
+                  "Generate & Send PO"
+                )}
               </button>
             </div>
             <div className="flex gap-10 justify-center items-center mt-6">
@@ -407,18 +413,12 @@ export const PurchaseOrderPage: React.FC = () => {
   );
   const [indents, setIndents] = useState<POIndentItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string>("");
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterField, setFilterField] = useState<
-    "itemName" | "shopName" | "traderName" | ""
-  >("");
-  const [filterValue, setFilterValue] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [showColumnFilter, setShowColumnFilter] = useState(false);
-  const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>({
+  const [columnVisibility] = useState<ColumnVisibility>({
     action: true,
     indentNumber: true,
     approvalDate: true,          // ← Now visible by default
@@ -490,33 +490,6 @@ export const PurchaseOrderPage: React.FC = () => {
     if (duplicates.length > 0) console.warn("Duplicate IDs:", duplicates);
   }, [indents]);
 
-  const columnLabels = {
-    action: "Action",
-    indentNumber: "Indent Number",
-    approvalDate: "Approval Date",      // ← Added label
-    skuCode: "SKU Code",
-    itemName: "Item Name",
-    brandName: "Brand Name",
-    moq: "MOQ",
-    maxLevel: "Max Level",
-    closingStock: "Closing Stock",
-    reorderQuantityPcs: "Reorder Quantity (Pcs)",
-    approved: "Approved",
-    traderName: "Trader Name",
-    sizeML: "Size (ML)",
-    reorderQuantityBox: "Reorder Quantity (Box)",
-    shopName: "Shop Name",
-    status: "Status",
-    remarks: "Remarks",
-  };
-
-  const toggleColumn = (column: keyof ColumnVisibility) => {
-    setColumnVisibility((prev) => ({
-      ...prev,
-      [column]: !prev[column],
-    }));
-  };
-
   // Helper
   const hasValue = (s?: string) => typeof s === "string" && s.trim() !== "";
 
@@ -533,44 +506,15 @@ export const PurchaseOrderPage: React.FC = () => {
   const filterIndents = (indents: POIndentItem[]) => {
     return indents.filter((indent) => {
       const searchLower = searchTerm.toLowerCase();
-      const searchMatch =
+      return (
         indent.indentNumber.toLowerCase().includes(searchLower) ||
         indent.skuCode.toLowerCase().includes(searchLower) ||
         indent.itemName.toLowerCase().includes(searchLower) ||
         indent.brandName.toLowerCase().includes(searchLower) ||
         indent.traderName.toLowerCase().includes(searchLower) ||
         indent.shopName.toLowerCase().includes(searchLower) ||
-        indent.orderBy.toLowerCase().includes(searchLower);
-
-      let fieldMatch = true;
-      if (filterField && filterValue.trim()) {
-        const fieldValueLower = indent[filterField]?.toLowerCase() || "";
-        fieldMatch = fieldValueLower.includes(filterValue.toLowerCase().trim());
-      }
-
-      // Date range filter
-      let dateMatch = true;
-      if (startDate || endDate) {
-        const indentDate = indent.approvalDate
-          ? new Date(indent.approvalDate)
-          : null;
-        if (indentDate) {
-          if (startDate && new Date(startDate) > indentDate) {
-            dateMatch = false;
-          }
-          if (endDate) {
-            const endOfDay = new Date(endDate);
-            endOfDay.setHours(23, 59, 59, 999);
-            if (endOfDay < indentDate) {
-              dateMatch = false;
-            }
-          }
-        } else {
-          dateMatch = !startDate && !endDate;
-        }
-      }
-
-      return searchMatch && fieldMatch && dateMatch;
+        indent.orderBy.toLowerCase().includes(searchLower)
+      );
     });
   };
 
@@ -593,152 +537,99 @@ export const PurchaseOrderPage: React.FC = () => {
     items: POIndentItem[],
     companyName: string
   ) => {
-    console.log("🚀 handleSubmitPO called with:", {
-      transporterName,
-      remarks,
-      itemsCount: items.length,
-      selectedIndent: selectedIndent?.id,
-    });
+    if (!selectedIndent) return;
 
-    if (selectedIndent && transporterName.trim()) {
-      console.log("✅ Validation passed, preparing to update indent");
+    setIsSubmitting(true);
+    setErrorMessage("");
+    console.log("✅ Validation passed, preparing backend update");
 
-      const currentTime = new Date().toISOString();
-      const currentDate = formatTimestamp(new Date());
-      console.log("📅 Current timestamp for PO submission:", currentTime);
-      console.log("📅 Current date for actual timestamps:", currentDate);
+    try {
+      const poNumberForSubmit = getNextPONumber();
+      let poCopyLink = "";
 
-      const poNumber = getNextPONumber();
-
-      const updatedIndents = indents.map((i) => {
-        const itemToUpdate = items.find((item) => item.id === i.id);
-        if (itemToUpdate) {
-          return {
-            ...i,
-            transporterName: transporterName.trim(),
-            poNumber: poNumber,
-            poGeneratedAt: currentTime,
-            actualTimestamp1: currentDate,
-            actualTimestamp2: currentDate,
-            actualTimestamp3: currentDate,
-            poCopyLink: "",
-            remarksFrontend: remarks.trim() || "",
-            poQty: itemToUpdate.reorderQuantityPcs,
-            isPO: true,
-            shopName: itemToUpdate.shopName,
-          };
-        }
-        return i;
-      });
-
-      setIndents(updatedIndents);
-      setShowModal(false);
-      setSelectedIndent(null);
-
-      setSuccessMessage(
-        `PO generated successfully! Processed ${items.length} indent(s).`
-      );
-      setTimeout(() => setSuccessMessage(""), 5000);
+      // 1. Generate PDF if possible
+      const tradeName = selectedIndent.traderName;
+      const poData = {
+        poNumber: poNumberForSubmit,
+        companyName,
+        tradeName,
+        transporterName: transporterName.trim(),
+        items: items.map((i: POIndentItem) => ({
+          indentNumber: i.indentNumber,
+          itemName: i.itemName,
+          reorderQuantityPcs: i.reorderQuantityPcs.toString(),
+          reorderQuantityBox: i.reorderQuantityBox?.toString() || "0",
+          sizeML: i.sizeML.toString(),
+        })),
+        remarks: remarks.trim() || "Generated via system",
+      };
 
       try {
-        let poCopyLink = "";
-        if (poNumber) {
-          const tradeName = selectedIndent.traderName;
-          const poData = {
-            poNumber,
-            companyName,
-            tradeName,
-            transporterName: transporterName.trim(),
-            items: items.map((i: POIndentItem) => ({
-              indentNumber: i.indentNumber,
-              itemName: i.itemName,
-              reorderQuantityPcs: i.reorderQuantityPcs.toString(),
-              reorderQuantityBox: i.reorderQuantityBox?.toString() || "0",
-              sizeML: i.sizeML.toString(),
-            })),
-            remarks: remarks.trim() || "Generated via system",
-          };
-          try {
-            poCopyLink = await generatePOPDF(poData);
-            if (poCopyLink && poCopyLink.includes("uc?export=download&id=")) {
-              const fileId = poCopyLink.split("id=")[1];
-              poCopyLink = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
-            }
-            console.log("✅ PDF generated and uploaded, viewUrl:", poCopyLink);
-          } catch (error) {
-            console.error("Error generating PDF:", error);
-          }
+        poCopyLink = await generatePOPDF(poData);
+        if (poCopyLink && poCopyLink.includes("uc?export=download&id=")) {
+          const fileId = poCopyLink.split("id=")[1];
+          poCopyLink = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
         }
-
-        if (poCopyLink) {
-          const finalUpdatedIndents = indents.map((i) => {
-            const itemToUpdate = items.find((item) => item.id === i.id);
-            if (itemToUpdate) {
-              return {
-                ...i,
-                poCopyLink,
-              };
-            }
-            return i;
-          });
-          setIndents(finalUpdatedIndents);
-        }
-
-        const updatePromises = items.map(async (item) => {
-          const updatedIndent = updatedIndents.find((i) => i.id === item.id);
-          if (updatedIndent) {
-            const finalIndent = poCopyLink
-              ? { ...updatedIndent, poCopyLink, shopName: item.shopName }
-              : { ...updatedIndent, shopName: item.shopName };
-            try {
-              await indentService.updateIndent(item.id, finalIndent);
-              console.log(
-                `✅ Successfully saved indent ${item.indentNumber} to Google Sheet`
-              );
-            } catch (error) {
-              console.error(
-                `❌ Error saving indent ${item.indentNumber} to Google Sheet:`,
-                error
-              );
-            }
-          }
-        });
-
-        await Promise.all(updatePromises);
-        console.log("✅ All indents processed for Google Sheet update");
-        window.location.reload();
+        console.log("✅ PDF generated and uploaded, viewUrl:", poCopyLink);
       } catch (error) {
-        console.error("Error in background operations:", error);
-        const revertedIndents = indents.map((i) => {
-          const itemToRevert = items.find((item) => item.id === i.id);
-          if (itemToRevert) {
-            return {
-              ...i,
-              transporterName: i.transporterName || "",
-              poNumber: i.poNumber || "",
-              poGeneratedAt: i.poGeneratedAt || "",
-              actualTimestamp1: i.actualTimestamp1 || "",
-              actualTimestamp2: i.actualTimestamp2 || "",
-              actualTimestamp3: i.actualTimestamp3 || "",
-              poCopyLink: i.poCopyLink || "",
-              remarksFrontend: i.remarksFrontend || "",
-              poQty: i.poQty || 0,
-              isPO: false,
-            };
-          }
-          return i;
-        });
-        setIndents(revertedIndents);
-        setSuccessMessage("");
-        setErrorMessage("Failed to generate PO. Please try again.");
-        setTimeout(() => setErrorMessage(""), 5000);
+        console.error("Error generating PDF:", error);
       }
-    } else {
-      console.log("❌ Validation failed:", {
-        hasSelectedIndent: !!selectedIndent,
-        transporterName: transporterName?.trim(),
-        transporterNameValid: transporterName?.trim()?.length > 0,
+
+      // 2. Prepare common updates
+      const currentTime = new Date().toISOString();
+      const currentDate = formatTimestamp(new Date());
+
+      // 3. Update backend for each item
+      const updatePromises = items.map(async (item) => {
+        const itemUpdate = {
+          transporterName: transporterName.trim(),
+          poNumber: poNumberForSubmit,
+          poGeneratedAt: currentTime,
+          actualTimestamp1: currentDate,
+          actualTimestamp2: currentDate,
+          actualTimestamp3: currentDate,
+          poCopyLink: poCopyLink,
+          remarksFrontend: remarks.trim() || "",
+          poQty: item.reorderQuantityPcs,
+          isPO: true,
+          shopName: item.shopName,
+        };
+
+        try {
+          await indentService.updateIndent(
+            item.indentNumber,
+            itemUpdate,
+            { skuCode: item.skuCode, itemName: item.itemName },
+            item._rowIndex
+          );
+          return { id: item.id, ...itemUpdate };
+        } catch (error) {
+          console.error(`❌ Error saving indent ${item.indentNumber}:`, error);
+          throw error;
+        }
       });
+
+      const updateResults = await Promise.all(updatePromises);
+
+      // 4. Update UI state only after all backend updates succeed
+      setIndents((prev) =>
+        prev.map((indent) => {
+          const result = updateResults.find((r) => r.id === indent.id);
+          return result ? { ...indent, ...result } : indent;
+        })
+      );
+
+      setShowModal(false);
+      setSelectedIndent(null);
+      setShowSuccessAnimation(true);
+      setActiveTab("history");
+
+    } catch (error) {
+      console.error("Error in PO submission:", error);
+      setErrorMessage("Failed to generate PO. Please try again.");
+      setTimeout(() => setErrorMessage(""), 5000);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -779,10 +670,10 @@ export const PurchaseOrderPage: React.FC = () => {
         <td className="px-6 py-4">{indent.skuCode}</td>
       )}
       {columnVisibility.itemName && (
-        <td className="px-6 py-4">{indent.itemName}</td>
+        <td className="px-6 py-4 min-w-[200px]">{indent.itemName}</td>
       )}
       {columnVisibility.brandName && (
-        <td className="px-6 py-4">{indent.brandName}</td>
+        <td className="px-6 py-4 min-w-[150px]">{indent.brandName}</td>
       )}
       {columnVisibility.moq && <td className="px-6 py-4">{indent.moq}</td>}
       {columnVisibility.maxLevel && (
@@ -811,7 +702,7 @@ export const PurchaseOrderPage: React.FC = () => {
         </td>
       )}
       {columnVisibility.traderName && (
-        <td className="px-6 py-4">{indent.traderName}</td>
+        <td className="px-6 py-4 min-w-[150px]">{indent.traderName}</td>
       )}
       {columnVisibility.sizeML && (
         <td className="px-6 py-4">{indent.sizeML}</td>
@@ -820,10 +711,10 @@ export const PurchaseOrderPage: React.FC = () => {
         <td className="px-6 py-4">{indent.reorderQuantityBox}</td>
       )}
       {columnVisibility.shopName && (
-        <td className="px-6 py-4">{indent.shopName}</td>
+        <td className="px-6 py-4 min-w-[150px]">{indent.shopName}</td>
       )}
       {columnVisibility.status && (
-        <td className="px-6 py-4">
+        <td className="px-6 py-4 min-w-[150px]">
           <span
             className={`px-2 py-1 text-xs rounded-full ${indent.shopManagerStatus === "Approved"
                 ? "bg-green-100 text-green-800"
@@ -835,7 +726,7 @@ export const PurchaseOrderPage: React.FC = () => {
         </td>
       )}
       {columnVisibility.remarks && (
-        <td className="px-6 py-4">{indent.remarks || "-"}</td>
+        <td className="px-6 py-4 min-w-[200px]">{indent.remarks || "-"}</td>
       )}
     </tr>
   );
@@ -844,54 +735,27 @@ export const PurchaseOrderPage: React.FC = () => {
     <div className="p-4 min-h-screen bg-gray-50 md:p-6 w-full lg:w-[calc(100vw-279px)] overflow-hidden ">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 md:text-3xl">
-          Generate & Send Purchase Order
+          PO Management
         </h1>
-        <p className="mt-1 text-sm text-gray-600">
-          Create POs for approved indents
+        <p className="mt-1 text-sm text-gray-600 md:text-base">
+          Generate and manage Purchase Orders
         </p>
       </div>
 
       {loading && (
-        <div className="py-12 text-center">
+        <div className="mb-6 text-center">
           <div className="inline-block w-8 h-8 rounded-full border-b-2 border-blue-600 animate-spin" />
-          <p className="mt-2 text-gray-600">Loading indents...</p>
+          <p className="mt-2 text-gray-600">Loading data...</p>
         </div>
       )}
 
       {error && (
         <div className="p-4 mb-6 bg-red-50 rounded-lg border border-red-200">
-          <p className="text-red-800">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-3 py-1 mt-2 text-sm text-red-800 bg-red-100 rounded hover:bg-red-200"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
-      {successMessage && (
-        <div className="p-4 mb-6 bg-green-50 rounded-lg border border-green-200">
           <div className="flex">
-            <div className="flex-shrink-0">
-              <svg
-                className="w-5 h-5 text-green-400"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </div>
             <div className="ml-3">
-              <h3 className="text-sm font-medium text-green-800">
-                PO Generated Successfully
-              </h3>
-              <div className="mt-2 text-sm text-green-700">
-                <p>{successMessage}</p>
+              <h3 className="text-sm font-medium text-red-800">Error loading data</h3>
+              <div className="mt-2 text-sm text-red-700">
+                <p>{error}</p>
               </div>
             </div>
           </div>
@@ -900,558 +764,172 @@ export const PurchaseOrderPage: React.FC = () => {
 
       {errorMessage && (
         <div className="p-4 mb-6 bg-red-50 rounded-lg border border-red-200">
-          <div className="flex">
-            <div className="flex-shrink-0">
-              <svg
-                className="w-5 h-5 text-red-400"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </div>
-            <div className="ml-3">
-              <h3 className="text-sm font-medium text-red-800">
-                Error Generating PO
-              </h3>
-              <div className="mt-2 text-sm text-red-700">
-                <p>{errorMessage}</p>
-              </div>
-            </div>
-          </div>
+          <p className="text-sm text-red-700">{errorMessage}</p>
         </div>
       )}
 
       {!loading && !error && (
-        <>
-          {/* Tabs */}
-          <div className="mb-6 border-b border-gray-200">
-            <nav className="flex space-x-8">
-              <button
-                onClick={() => setActiveTab("pending")}
-                className={`py-2 border-b-2 font-medium text-sm ${activeTab === "pending"
-                    ? "border-green-500 text-green-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
-                  }`}
-              >
-                Pending ({pendingIndents.length})
-              </button>
-              <button
-                onClick={() => setActiveTab("history")}
-                className={`py-2 border-b-2 font-medium text-sm ${activeTab === "history"
-                    ? "border-green-500 text-green-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
-                  }`}
-              >
-                History ({historyIndents.length})
-              </button>
-            </nav>
-          </div>
-
-          {/* Search and Filter Section */}
-          <div className="flex sticky top-0 z-20 flex-col gap-3 px-4 pt-3 pb-3 -mx-4 -mt-3 mb-4 bg-gray-50 sm:flex-row md:-mx-6 md:px-6">
-            <div className="flex flex-col gap-3 w-full md:flex-row">
-              {/* Search Bar */}
-              <div className="relative flex-1">
-                <div className="absolute left-3 top-1/2 w-4 h-4 text-gray-400 transform -translate-y-1/2">
-                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
-                </div>
-                <input
-                  type="text"
-                  placeholder="Search by indent, SKU, item, brand, trader, shop..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="py-2 pr-3 pl-9 w-full text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-
-              {/* Date Range Filter */}
-              <div className="flex flex-col gap-2 sm:flex-row items-center">
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <svg
-                      className="w-4 h-4 text-gray-400"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </div>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="pl-10 pr-3 py-2 w-full text-sm bg-white rounded-lg border border-gray-300 outline-none sm:w-40 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Start Date"
-                  />
-                </div>
-                <span className="text-gray-400">to</span>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <svg
-                      className="w-4 h-4 text-gray-400"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </div>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="pl-10 pr-3 py-2 w-full text-sm bg-white rounded-lg border border-gray-300 outline-none sm:w-40 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="End Date"
-                  />
-                </div>
-                {(startDate || endDate) && (
-                  <button
-                    onClick={() => {
-                      setStartDate("");
-                      setEndDate("");
-                    }}
-                    className="ml-1 p-1 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
-                    title="Clear date range"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Filter Dropdown */}
-            <div className="flex gap-2">
-              <select
-                value={filterField}
-                onChange={(e) =>
-                  setFilterField(
-                    e.target.value as
-                    | "itemName"
-                    | "shopName"
-                    | "traderName"
-                    | ""
-                  )
-                }
-                className="px-3 py-2 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Filter by...</option>
-                <option value="itemName">Item Name</option>
-                <option value="shopName">Shop Name</option>
-                <option value="traderName">Trader Name</option>
-              </select>
-              {filterField && (
-                <input
-                  type="text"
-                  placeholder={`Filter by ${filterField === "itemName"
-                      ? "Item"
-                      : filterField === "shopName"
-                        ? "Shop"
-                        : "Trader"
-                    } Name`}
-                  value={filterValue}
-                  onChange={(e) => setFilterValue(e.target.value)}
-                  className="px-3 py-2 w-40 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              )}
-            </div>
-
-            {/* Column Filter Button */}
-            <div className="relative">
-              <button
-                onClick={() => setShowColumnFilter(!showColumnFilter)}
-                className="flex gap-2 justify-center items-center px-3 py-2 w-full text-sm text-white whitespace-nowrap bg-blue-600 rounded-lg transition-colors hover:bg-blue-700 sm:w-auto"
-              >
-                <Filter className="w-4 h-4" />
-                Columns
-              </button>
-
-              {/* Column Filter Dropdown */}
-              {showColumnFilter && (
-                <>
-                  <div
-                    className="fixed inset-0 z-30 bg-black bg-opacity-25 sm:hidden"
-                    onClick={() => setShowColumnFilter(false)}
-                  ></div>
-
-                  <div className="fixed sm:absolute left-0 right-0 sm:left-auto sm:right-0 bottom-0 sm:bottom-auto top-auto sm:top-full sm:mt-2 w-full sm:w-80 bg-white rounded-t-2xl sm:rounded-lg shadow-2xl border-t sm:border border-gray-200 z-40 max-h-[70vh] sm:max-h-96 overflow-hidden flex flex-col">
-                    <div className="flex justify-between items-center p-4 border-b border-gray-200">
-                      <h3 className="font-semibold text-gray-900">
-                        Show/Hide Columns
-                      </h3>
-                      <button
-                        onClick={() => setShowColumnFilter(false)}
-                        className="text-gray-500 sm:hidden hover:text-gray-700"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div className="overflow-y-auto p-4">
-                      <div className="space-y-1">
-                        {Object.entries(columnLabels).map(([key, label]) => (
-                          <label
-                            key={key}
-                            className="flex gap-2 items-center p-2 rounded transition-colors cursor-pointer hover:bg-gray-50"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={
-                                columnVisibility[key as keyof ColumnVisibility]
-                              }
-                              onChange={() =>
-                                toggleColumn(key as keyof ColumnVisibility)
-                              }
-                              className="w-4 h-4 text-blue-600 rounded cursor-pointer focus:ring-2 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-gray-700">
-                              {label}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
+        <div>
+          <div className="mb-4">
+            <div className="border-b border-gray-200">
+              <nav className="flex -mb-px space-x-4 md:space-x-8">
+                <button
+                  onClick={() => setActiveTab("pending")}
+                  className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${activeTab === "pending"
+                    ? "border-blue-500 text-blue-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                    }`}
+                >
+                  Pending ({pendingIndents.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab("history")}
+                  className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${activeTab === "history"
+                    ? "border-blue-500 text-blue-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                    }`}
+                >
+                  History ({historyIndents.length})
+                </button>
+              </nav>
             </div>
           </div>
 
-          <div
-            key={activeTab}
-            className="hidden bg-white rounded-xl border border-gray-200 shadow-lg lg:block"
-          >
-            <div className="overflow-x-auto w-full lg:w-[calc(100vw-16rem)]">
-              <div className="max-h-[70vh] overflow-y-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="sticky top-0 z-10 bg-gray-100">
-                    <tr>
-                      {columnVisibility.action && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Action
-                        </th>
-                      )}
-                      {columnVisibility.indentNumber && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Indent
-                        </th>
-                      )}
-                      {/* Approval Date Header - Right after Indent */}
-                      {columnVisibility.approvalDate && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Approval Date
-                        </th>
-                      )}
-                      {columnVisibility.skuCode && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          SKU
-                        </th>
-                      )}
-                      {columnVisibility.itemName && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Item
-                        </th>
-                      )}
-                      {columnVisibility.brandName && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Brand
-                        </th>
-                      )}
-                      {columnVisibility.moq && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          MOQ
-                        </th>
-                      )}
-                      {columnVisibility.maxLevel && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Max
-                        </th>
-                      )}
-                      {columnVisibility.closingStock && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Stock
-                        </th>
-                      )}
-                      {columnVisibility.reorderQuantityPcs && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Total Quantity (Pcs)
-                        </th>
-                      )}
-                      {columnVisibility.approved && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Approved
-                        </th>
-                      )}
-                      {columnVisibility.traderName && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Trader
-                        </th>
-                      )}
-                      {columnVisibility.sizeML && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Size (ML)
-                        </th>
-                      )}
-                      {columnVisibility.reorderQuantityBox && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Reorder (Box)
-                        </th>
-                      )}
-                      {columnVisibility.shopName && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Shop
-                        </th>
-                      )}
-                      {columnVisibility.status && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Status
-                        </th>
-                      )}
-                      {columnVisibility.remarks && (
-                        <th className="px-6 py-3 text-xs font-medium text-left text-gray-500 uppercase">
-                          Remarks
-                        </th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {(activeTab === "pending"
-                      ? pendingIndents
-                      : historyIndents
-                    ).map((indent, index) => (
-                      <TableRow
-                        key={`${indent.indentNumber}-${indent.traderName}-${indent.shopName}-${index}`}
-                        indent={indent}
-                      />
+          <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center">
+            <div className="relative flex-1">
+              <Filter className="absolute left-3 top-1/2 w-4 h-4 text-gray-400 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search indents..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 w-full rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left text-gray-500">
+                <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+                  <tr>
+                    {columnVisibility.action && <th className="px-6 py-3">Action</th>}
+                    {columnVisibility.indentNumber && <th className="px-6 py-3">Indent #</th>}
+                    {columnVisibility.approvalDate && <th className="px-6 py-3">Appr. Date</th>}
+                    {columnVisibility.skuCode && <th className="px-6 py-3">SKU</th>}
+                    {columnVisibility.itemName && <th className="px-6 py-3 min-w-[200px]">Item</th>}
+                    {columnVisibility.brandName && <th className="px-6 py-3">Brand</th>}
+                    {columnVisibility.moq && <th className="px-6 py-3">MOQ</th>}
+                    {columnVisibility.maxLevel && <th className="px-6 py-3">Max</th>}
+                    {columnVisibility.closingStock && <th className="px-6 py-3">Stock</th>}
+                    {columnVisibility.reorderQuantityPcs && <th className="px-6 py-3">Qty (Pcs)</th>}
+                    {columnVisibility.approved && <th className="px-6 py-3">Approved</th>}
+                    {columnVisibility.traderName && <th className="px-6 py-3">Trader</th>}
+                    {columnVisibility.sizeML && <th className="px-6 py-3">Size</th>}
+                    {columnVisibility.reorderQuantityBox && <th className="px-6 py-3">Box</th>}
+                    {columnVisibility.shopName && <th className="px-6 py-3">Shop</th>}
+                    {columnVisibility.status && <th className="px-6 py-3">Status</th>}
+                    {columnVisibility.remarks && <th className="px-6 py-3">Remarks</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {activeTab === "pending"
+                    ? pendingIndents.map((indent) => (
+                      <TableRow key={indent.id} indent={indent} />
+                    ))
+                    : historyIndents.map((indent) => (
+                      <TableRow key={indent.id} indent={indent} />
                     ))}
-                  </tbody>
-                </table>
-
-                {(activeTab === "pending" ? pendingIndents : historyIndents)
-                  .length === 0 && (
-                    <div className="py-12 text-center text-gray-500">
-                      No {activeTab === "pending" ? "approved indents" : "POs"}{" "}
-                      found
-                    </div>
-                  )}
-              </div>
+                </tbody>
+              </table>
             </div>
           </div>
 
-          {/* Mobile Card View - Approval Date added */}
-          <div className="space-y-4 lg:hidden">
-            {(activeTab === "pending" ? pendingIndents : historyIndents)
-              .length > 0 ? (
-              (activeTab === "pending" ? pendingIndents : historyIndents).map(
-                (indent, index) => (
-                  <div
-                    key={`${indent.indentNumber}-${indent.traderName}-${indent.shopName}-${index}`}
-                    className="p-4 space-y-3 bg-white rounded-xl border border-gray-200 shadow-md"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="text-sm font-semibold text-gray-900">
-                          {indent.indentNumber}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          Approval: {indent.approvalDate
-                            ? format(new Date(indent.approvalDate), "dd/MM/yyyy")
-                            : "-"}
-                        </div>
-                      </div>
-                      <span
-                        className={`px-2 py-1 text-xs font-medium rounded-full ${indent.approved === "Yes"
-                            ? "bg-green-100 text-green-800"
-                            : "bg-yellow-100 text-yellow-800"
-                          }`}
-                      >
-                        {indent.approved}
-                      </span>
-                    </div>
+          {showModal && selectedIndent && (
+            <POGenerateModal
+              indent={selectedIndent}
+              onClose={() => {
+                setShowModal(false);
+                setSelectedIndent(null);
+              }}
+              onConfirm={handleSubmitPO}
+              indents={indents}
+              isSubmitting={isSubmitting}
+            />
+          )}
 
-                    <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                      <div>
-                        <div className="text-xs text-gray-500">Item Name</div>
-                        <div className="font-medium text-gray-900">
-                          {indent.itemName}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-gray-500">Brand</div>
-                        <div className="font-medium text-gray-900">
-                          {indent.brandName}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-gray-500">Trader</div>
-                        <div className="font-medium text-gray-900">
-                          {indent.traderName}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-gray-500">Shop</div>
-                        <div className="font-medium text-gray-900">
-                          {indent.shopName}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-gray-500">Status</div>
-                        <div className="font-medium text-gray-900">
-                          <span
-                            className={`px-2 py-1 text-xs font-medium rounded-full ${indent.shopManagerStatus === "Approved"
-                                ? "bg-green-100 text-green-800"
-                                : "bg-gray-100 text-gray-800"
-                              }`}
+          {showHistoryModal && selectedIndent && (
+            <div className="flex fixed inset-0 z-50 justify-center items-center p-4 bg-black bg-opacity-50">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                <div className="p-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <div>
+                      <h2 className="text-xl font-bold">PO Details</h2>
+                      <div className="flex gap-4 mt-2 text-sm">
+                        <span>
+                          <strong>PO #:</strong> {selectedIndent.poNumber || "N/A"}
+                        </span>
+                        <span>
+                          <strong>Transporter:</strong>{" "}
+                          {selectedIndent.transporterName || "N/A"}
+                        </span>
+                        {selectedIndent.poCopyLink && (
+                          <a
+                            href={selectedIndent.poCopyLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium text-blue-600 underline hover:text-blue-800"
                           >
-                            {indent.shopManagerStatus || "Pending"}
-                          </span>
-                        </div>
+                            View PO Copy
+                          </a>
+                        )}
                       </div>
-                      {activeTab === "history" && indent.poNumber && (
-                        <div>
-                          <div className="text-xs text-gray-500">PO Number</div>
-                          <div className="font-medium text-gray-900">
-                            {indent.poNumber}
-                          </div>
-                        </div>
-                      )}
                     </div>
-
-                    {activeTab === "pending" && (
-                      <button
-                        onClick={() => handleGeneratePO(indent)}
-                        className="flex gap-2 justify-center items-center px-4 py-2 w-full text-sm font-medium text-white bg-green-600 rounded-lg transition-colors duration-200 hover:bg-green-700"
-                      >
-                        <Send className="w-4 h-4" />
-                        Generate PO
-                      </button>
-                    )}
-
-                    {activeTab === "history" && (
-                      <button
-                        onClick={() => handleViewHistory(indent)}
-                        className="flex gap-2 justify-center items-center px-4 py-2 w-full text-sm font-medium text-white bg-blue-600 rounded-lg transition-colors duration-200 hover:bg-blue-700"
-                      >
-                        <Eye className="w-4 h-4" />
-                        View Details
-                      </button>
-                    )}
+                    <button
+                      onClick={() => {
+                        setShowHistoryModal(false);
+                        setSelectedIndent(null);
+                      }}
+                      className="p-1 hover:bg-gray-100 rounded-full"
+                    >
+                      <X className="w-6 h-6" />
+                    </button>
                   </div>
-                )
-              )
-            ) : (
-              <div className="p-12 text-center bg-white rounded-xl">
-                <p className="text-gray-500">
-                  No {activeTab === "pending" ? "approved indents" : "POs"}{" "}
-                  found
-                </p>
-              </div>
-            )}
-          </div>
-        </>
-      )}
 
-      {/* PO Modal */}
-      {showModal && selectedIndent && (
-        <POGenerateModal
-          indent={selectedIndent}
-          onClose={() => {
-            setShowModal(false);
-            setSelectedIndent(null);
-          }}
-          onConfirm={handleSubmitPO}
-          indents={indents}
-        />
-      )}
-
-      {/* History Modal */}
-      {showHistoryModal && selectedIndent && (
-        <div className="flex fixed inset-0 z-50 justify-center items-center p-4 bg-black bg-opacity-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex justify-between items-center mb-4">
-                <div>
-                  <h2 className="text-xl font-bold">PO Details</h2>
-                  <div className="flex gap-4 mt-2 text-sm">
-                    <span>
-                      <strong>PO #:</strong> {selectedIndent.poNumber || "N/A"}
-                    </span>
-                    <span>
-                      <strong>Transporter:</strong>{" "}
-                      {selectedIndent.transporterName || "N/A"}
-                    </span>
-                    {selectedIndent.poCopyLink && (
-                      <a
-                        href={selectedIndent.poCopyLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-medium text-blue-600 underline hover:text-blue-800"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          window.open(
-                            selectedIndent.poCopyLink!,
-                            "_blank",
-                            "noopener,noreferrer"
-                          );
-                        }}
-                      >
-                        View PDF
-                      </a>
-                    )}
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+                      <div>
+                        <p className="text-xs text-gray-500 uppercase">Generated At</p>
+                        <p className="font-medium">
+                          {selectedIndent.poGeneratedAt
+                            ? format(new Date(selectedIndent.poGeneratedAt), "dd MMM yyyy HH:mm")
+                            : "N/A"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500 uppercase">Quantity (Pcs)</p>
+                        <p className="font-medium">{selectedIndent.poQty || selectedIndent.reorderQuantityPcs}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold mb-2">Remarks</h3>
+                      <p className="p-3 bg-gray-50 rounded italic text-gray-600">
+                        {selectedIndent.remarksFrontend || "No remarks provided"}
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <button
-                  onClick={() => setShowHistoryModal(false)}
-                  className="text-gray-500 hover:text-gray-700"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="space-y-4 text-sm">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <strong>Indent #:</strong> {selectedIndent.indentNumber}
-                  </div>
-                  <div>
-                    <strong>Item:</strong> {selectedIndent.itemName}
-                  </div>
-                  <div>
-                    <strong>Reorder (Box):</strong>{" "}
-                    {selectedIndent.reorderQuantityBox}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end mt-6">
-                <button
-                  onClick={() => setShowHistoryModal(false)}
-                  className="px-6 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-                >
-                  Close
-                </button>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
+
+      <SuccessAnimation
+        visible={showSuccessAnimation}
+        message="PO Generated Successfully!"
+        onComplete={() => setShowSuccessAnimation(false)}
+      />
     </div>
   );
 };
