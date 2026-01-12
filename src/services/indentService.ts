@@ -214,6 +214,7 @@ interface IndentService {
   getLoginUsers(): Promise<LoginUser[]>;
   getColumnAData(): Promise<string[]>;
   getTimestampsByIndent(): Promise<Record<string, string>>;
+  getProcessedPOIndentNumbers(): Promise<Set<string>>;
 }
 
 // Function to fetch data from column A of the FMS sheet
@@ -285,12 +286,60 @@ const fetchColumnAData = async (): Promise<string[]> => {
   }
 };
 
+// Function to fetch indent numbers from the PO sheet (Column B)
+const fetchProcessedPOIndentNumbers = async (): Promise<Set<string>> => {
+  if (!SCRIPT_URL) return new Set();
+
+  try {
+    const base = buildUrl("fetch");
+    let urlStr = base;
+    try {
+      const absolute = new URL(
+        base,
+        _isBrowser ? window.location.origin : "http://localhost"
+      );
+      // PO sheet, Column B is Indent Number
+      absolute.searchParams.set("range", "PO!B:B");
+      urlStr = absolute.toString();
+    } catch {
+      urlStr = `${base}${
+        base.includes("?") ? "&" : "?"
+      }range=${encodeURIComponent("PO!B:B")}`;
+    }
+
+    const response = await fetch(urlStr, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+
+    if (!response.ok) return new Set();
+
+    const data = await response.json();
+    const set = new Set<string>();
+
+    const rows = Array.isArray(data) ? data : data?.values || data?.data || [];
+    rows.forEach((row: any, i: number) => {
+      if (i === 0) return; // skip header
+      const val = Array.isArray(row) ? String(row[0] ?? "").trim() : String(row ?? "").trim();
+      if (val) set.add(val);
+    });
+
+    return set;
+  } catch (err) {
+    console.error("Error fetching processed PO indent numbers:", err);
+    return new Set();
+  }
+};
+
 export const indentService: IndentService = {
   async getColumnAData(): Promise<string[]> {
     return fetchColumnAData();
   },
   async getTimestampsByIndent(): Promise<Record<string, string>> {
     return fetchTimestampIndentMap();
+  },
+  async getProcessedPOIndentNumbers(): Promise<Set<string>> {
+    return fetchProcessedPOIndentNumbers();
   },
   async getIndents(): Promise<IndentItem[]> {
     if (!SCRIPT_URL) {
@@ -820,7 +869,7 @@ export const indentService: IndentService = {
         // We'll approximate: if we detected headerRowIdx, data starts at headerRowIdx + 2 (1-based).
         // If not explicit, assume row 2 (header at 1).
         
-        let startRow = 2; // Default data start row
+
         
         // Try to recover headerRowIdx from the scope if possible, or re-detect quickly if rows came from raw data
         // Since we can't easily access the scoped headerRowIdx variable from the if/else blocks above without refactoring,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Filter, X, Send, Eye, Truck } from "lucide-react";
 import { format } from "date-fns";
 import { indentService } from "../services/indentService";
@@ -17,7 +17,10 @@ const formatTimestamp = (date: Date): string => {
   return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
 };
 
-// Extend IndentItem to include optional PO fields
+const hasValue = (s?: string) => typeof s === "string" && s.trim() !== "";
+const isProcessed = (i: any, processedSet: Set<string>) => 
+  hasValue(i.transporterName) || hasValue(i.poNumber) || i.isPO === true || processedSet.has(i.indentNumber);
+
 interface POIndentItem {
   id: string;
   indentNumber: string;
@@ -81,6 +84,7 @@ interface POGenerateModalProps {
     companyName: string
   ) => void;
   indents: POIndentItem[];
+  processedIndentNumbers: Set<string>;
   isSubmitting?: boolean;
 }
 
@@ -89,6 +93,7 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
   onClose,
   onConfirm,
   indents,
+  processedIndentNumbers,
   isSubmitting = false,
 }) => {
   const today = new Date();
@@ -159,18 +164,18 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
       localIndents
         .filter(
           (i) =>
-            i.shopManagerStatus === "Approved" && !i.transporterName?.trim()
+            i.shopManagerStatus === "Approved" && !isProcessed(i, processedIndentNumbers)
         )
-        .map((i) => i.traderName)
+        .map((i: POIndentItem) => i.traderName)
         .filter(Boolean)
     ),
   ];
 
   const visibleTraderIndents = traderIndents.filter(
-    (i) =>
+    (i: POIndentItem) =>
       !deletedIds.has(i.id) &&
       i.shopManagerStatus === "Approved" &&
-      !i.transporterName?.trim()
+      !isProcessed(i, processedIndentNumbers)
   );
 
   // Always include the selected indent, even if it doesn't match the filters
@@ -404,6 +409,118 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
 };
 
 // Main Component
+interface TableRowProps {
+  indent: POIndentItem;
+  activeTab: "pending" | "history";
+  columnVisibility: ColumnVisibility;
+  handleGeneratePO: (indent: POIndentItem) => void;
+  handleViewHistory: (indent: POIndentItem) => void;
+}
+
+const TableRow: React.FC<TableRowProps> = ({
+  indent,
+  activeTab,
+  columnVisibility,
+  handleGeneratePO,
+  handleViewHistory
+}) => (
+  <tr className="hover:bg-gray-50">
+    {columnVisibility.action && (
+      <td className="px-6 py-4">
+        {activeTab === "pending" ? (
+          <button
+            onClick={() => handleGeneratePO(indent)}
+            className="flex gap-1 items-center px-3 py-1 text-sm text-white bg-green-600 rounded-lg hover:bg-green-700"
+          >
+            <Send className="w-4 h-4" />
+            Generate PO
+          </button>
+        ) : (
+          <button
+            onClick={() => handleViewHistory(indent)}
+            className="flex gap-1 items-center px-3 py-1 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+          >
+            <Eye className="w-4 h-4" />
+            View
+          </button>
+        )}
+      </td>
+    )}
+    {columnVisibility.indentNumber && (
+      <td className="px-6 py-4 font-medium">{indent.indentNumber}</td>
+    )}
+    {columnVisibility.approvalDate && (
+      <td className="px-6 py-4">
+        {indent.approvalDate
+          ? format(new Date(indent.approvalDate), "dd/MM/yyyy")
+          : "-"}
+      </td>
+    )}
+    {columnVisibility.skuCode && (
+      <td className="px-6 py-4">{indent.skuCode}</td>
+    )}
+    {columnVisibility.itemName && (
+      <td className="px-6 py-4 min-w-[200px]">{indent.itemName}</td>
+    )}
+    {columnVisibility.brandName && (
+      <td className="px-6 py-4 min-w-[150px]">{indent.brandName}</td>
+    )}
+    {columnVisibility.moq && <td className="px-6 py-4">{indent.moq}</td>}
+    {columnVisibility.maxLevel && (
+      <td className="px-6 py-4">{indent.maxLevel}</td>
+    )}
+    {columnVisibility.closingStock && (
+      <td className="px-6 py-4">{indent.closingStock}</td>
+    )}
+    {columnVisibility.reorderQuantityPcs && (
+      <td className="px-6 py-4">
+        {indent.bottlesPerCase && indent.reorderQuantityBox
+          ? indent.bottlesPerCase * indent.reorderQuantityBox
+          : indent.reorderQuantityPcs || 0}
+      </td>
+    )}
+    {columnVisibility.approved && (
+      <td className="px-6 py-4">
+        <span
+          className={`px-2 py-1 text-xs rounded-full ${indent.approved === "Yes"
+            ? "bg-green-100 text-green-800"
+            : "bg-yellow-100 text-yellow-800"
+            }`}
+        >
+          {indent.approved}
+        </span>
+      </td>
+    )}
+    {columnVisibility.traderName && (
+      <td className="px-6 py-4 min-w-[150px]">{indent.traderName}</td>
+    )}
+    {columnVisibility.sizeML && (
+      <td className="px-6 py-4">{indent.sizeML}</td>
+    )}
+    {columnVisibility.reorderQuantityBox && (
+      <td className="px-6 py-4">{indent.reorderQuantityBox}</td>
+    )}
+    {columnVisibility.shopName && (
+      <td className="px-6 py-4 min-w-[150px]">{indent.shopName}</td>
+    )}
+    {columnVisibility.status && (
+      <td className="px-6 py-4 min-w-[150px]">
+        <span
+          className={`px-2 py-1 text-xs rounded-full ${indent.shopManagerStatus === "Approved"
+            ? "bg-green-100 text-green-800"
+            : "bg-gray-100 text-gray-800"
+            }`}
+        >
+          {indent.shopManagerStatus || "Pending"}
+        </span>
+      </td>
+    )}
+    {columnVisibility.remarks && (
+      <td className="px-6 py-4 min-w-[200px]">{indent.remarks || "-"}</td>
+    )}
+  </tr>
+);
+
 export const PurchaseOrderPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
   const [showModal, setShowModal] = useState(false);
@@ -412,6 +529,7 @@ export const PurchaseOrderPage: React.FC = () => {
     null
   );
   const [indents, setIndents] = useState<POIndentItem[]>([]);
+  const [processedIndentNumbers, setProcessedIndentNumbers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -459,7 +577,10 @@ export const PurchaseOrderPage: React.FC = () => {
       try {
         setLoading(true);
         setError(null);
-        const data = await indentService.getIndents();
+        const [data, poSet] = await Promise.all([
+          indentService.getIndents(),
+          indentService.getProcessedPOIndentNumbers()
+        ]);
         const userShopRaw = storageUtils.getCurrentUser()?.shopName || "";
         const allowedShops =
           userShopRaw && userShopRaw.toLowerCase() !== "all"
@@ -474,6 +595,7 @@ export const PurchaseOrderPage: React.FC = () => {
           )
           : (data as POIndentItem[]);
         setIndents(filtered);
+        setProcessedIndentNumbers(poSet);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load indents");
       } finally {
@@ -490,37 +612,6 @@ export const PurchaseOrderPage: React.FC = () => {
     if (duplicates.length > 0) console.warn("Duplicate IDs:", duplicates);
   }, [indents]);
 
-  // Helper
-  const hasValue = (s?: string) => typeof s === "string" && s.trim() !== "";
-
-  // PO Logic: Indent is "pending" if approved but no PO generated
-  const basePendingIndents = indents.filter(
-    (i) => i.shopManagerStatus === "Approved" && !hasValue(i.transporterName)
-  );
-
-  const baseHistoryIndents = indents.filter(
-    (i) => i.shopManagerStatus === "Approved" && hasValue(i.transporterName)
-  );
-
-  // Apply search and filter
-  const filterIndents = (indents: POIndentItem[]) => {
-    return indents.filter((indent) => {
-      const searchLower = searchTerm.toLowerCase();
-      return (
-        indent.indentNumber.toLowerCase().includes(searchLower) ||
-        indent.skuCode.toLowerCase().includes(searchLower) ||
-        indent.itemName.toLowerCase().includes(searchLower) ||
-        indent.brandName.toLowerCase().includes(searchLower) ||
-        indent.traderName.toLowerCase().includes(searchLower) ||
-        indent.shopName.toLowerCase().includes(searchLower) ||
-        indent.orderBy.toLowerCase().includes(searchLower)
-      );
-    });
-  };
-
-  const pendingIndents = filterIndents(basePendingIndents);
-  const historyIndents = filterIndents(baseHistoryIndents);
-
   const handleGeneratePO = (indent: POIndentItem) => {
     setSelectedIndent(indent);
     setShowModal(true);
@@ -530,6 +621,37 @@ export const PurchaseOrderPage: React.FC = () => {
     setSelectedIndent(indent);
     setShowHistoryModal(true);
   };
+
+  const filterIndentsBySearch = (data: POIndentItem[]) => {
+    return data.filter((indent) => {
+      const searchLower = searchTerm.toLowerCase();
+      return (
+        (indent.indentNumber || "").toLowerCase().includes(searchLower) ||
+        (indent.skuCode || "").toLowerCase().includes(searchLower) ||
+        (indent.itemName || "").toLowerCase().includes(searchLower) ||
+        (indent.brandName || "").toLowerCase().includes(searchLower) ||
+        (indent.traderName || "").toLowerCase().includes(searchLower) ||
+        (indent.shopName || "").toLowerCase().includes(searchLower) ||
+        (indent.orderBy || "").toLowerCase().includes(searchLower)
+      );
+    });
+  };
+
+  const pendingIndents = useMemo(() => {
+    const base = indents.filter(
+      (i) =>
+        i.shopManagerStatus === "Approved" && !isProcessed(i, processedIndentNumbers)
+    );
+    return filterIndentsBySearch(base);
+  }, [indents, searchTerm, processedIndentNumbers]);
+
+  const historyIndents = useMemo(() => {
+    const base = indents.filter(
+      (i) =>
+        i.shopManagerStatus === "Approved" && isProcessed(i, processedIndentNumbers)
+    );
+    return filterIndentsBySearch(base);
+  }, [indents, searchTerm, processedIndentNumbers]);
 
   const handleSubmitPO = async (
     transporterName: string,
@@ -619,6 +741,13 @@ export const PurchaseOrderPage: React.FC = () => {
         })
       );
 
+      // Add the processed indent numbers to the local set to ensure immediate UI update
+      setProcessedIndentNumbers((prev) => {
+        const next = new Set(prev);
+        items.forEach((item) => next.add(item.indentNumber));
+        return next;
+      });
+
       setShowModal(false);
       setSelectedIndent(null);
       setShowSuccessAnimation(true);
@@ -632,104 +761,6 @@ export const PurchaseOrderPage: React.FC = () => {
       setIsSubmitting(false);
     }
   };
-
-  const TableRow: React.FC<{ indent: POIndentItem }> = ({ indent }) => (
-    <tr className="hover:bg-gray-50">
-      {columnVisibility.action && (
-        <td className="px-6 py-4">
-          {activeTab === "pending" ? (
-            <button
-              onClick={() => handleGeneratePO(indent)}
-              className="flex gap-1 items-center px-3 py-1 text-sm text-white bg-green-600 rounded-lg hover:bg-green-700"
-            >
-              <Send className="w-4 h-4" />
-              Generate PO
-            </button>
-          ) : (
-            <button
-              onClick={() => handleViewHistory(indent)}
-              className="flex gap-1 items-center px-3 py-1 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-            >
-              <Eye className="w-4 h-4" />
-              View
-            </button>
-          )}
-        </td>
-      )}
-      {columnVisibility.indentNumber && (
-        <td className="px-6 py-4 font-medium">{indent.indentNumber}</td>
-      )}
-      {columnVisibility.approvalDate && (
-        <td className="px-6 py-4">
-          {indent.approvalDate
-            ? format(new Date(indent.approvalDate), "dd/MM/yyyy")
-            : "-"}
-        </td>
-      )}
-      {columnVisibility.skuCode && (
-        <td className="px-6 py-4">{indent.skuCode}</td>
-      )}
-      {columnVisibility.itemName && (
-        <td className="px-6 py-4 min-w-[200px]">{indent.itemName}</td>
-      )}
-      {columnVisibility.brandName && (
-        <td className="px-6 py-4 min-w-[150px]">{indent.brandName}</td>
-      )}
-      {columnVisibility.moq && <td className="px-6 py-4">{indent.moq}</td>}
-      {columnVisibility.maxLevel && (
-        <td className="px-6 py-4">{indent.maxLevel}</td>
-      )}
-      {columnVisibility.closingStock && (
-        <td className="px-6 py-4">{indent.closingStock}</td>
-      )}
-      {columnVisibility.reorderQuantityPcs && (
-        <td className="px-6 py-4">
-          {indent.bottlesPerCase && indent.reorderQuantityBox
-            ? indent.bottlesPerCase * indent.reorderQuantityBox
-            : indent.reorderQuantityPcs || 0}
-        </td>
-      )}
-      {columnVisibility.approved && (
-        <td className="px-6 py-4">
-          <span
-            className={`px-2 py-1 text-xs rounded-full ${indent.approved === "Yes"
-                ? "bg-green-100 text-green-800"
-                : "bg-yellow-100 text-yellow-800"
-              }`}
-          >
-            {indent.approved}
-          </span>
-        </td>
-      )}
-      {columnVisibility.traderName && (
-        <td className="px-6 py-4 min-w-[150px]">{indent.traderName}</td>
-      )}
-      {columnVisibility.sizeML && (
-        <td className="px-6 py-4">{indent.sizeML}</td>
-      )}
-      {columnVisibility.reorderQuantityBox && (
-        <td className="px-6 py-4">{indent.reorderQuantityBox}</td>
-      )}
-      {columnVisibility.shopName && (
-        <td className="px-6 py-4 min-w-[150px]">{indent.shopName}</td>
-      )}
-      {columnVisibility.status && (
-        <td className="px-6 py-4 min-w-[150px]">
-          <span
-            className={`px-2 py-1 text-xs rounded-full ${indent.shopManagerStatus === "Approved"
-                ? "bg-green-100 text-green-800"
-                : "bg-gray-100 text-gray-800"
-              }`}
-          >
-            {indent.shopManagerStatus || "Pending"}
-          </span>
-        </td>
-      )}
-      {columnVisibility.remarks && (
-        <td className="px-6 py-4 min-w-[200px]">{indent.remarks || "-"}</td>
-      )}
-    </tr>
-  );
 
   return (
     <div className="p-4 min-h-screen bg-gray-50 md:p-6 w-full lg:w-[calc(100vw-279px)] overflow-hidden ">
@@ -832,14 +863,17 @@ export const PurchaseOrderPage: React.FC = () => {
                     {columnVisibility.remarks && <th className="px-6 py-3">Remarks</th>}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {activeTab === "pending"
-                    ? pendingIndents.map((indent) => (
-                      <TableRow key={indent.id} indent={indent} />
-                    ))
-                    : historyIndents.map((indent) => (
-                      <TableRow key={indent.id} indent={indent} />
-                    ))}
+                <tbody key={activeTab} className="divide-y divide-gray-200">
+                  {(activeTab === "pending" ? pendingIndents : historyIndents).map((indent) => (
+                    <TableRow
+                      key={`${activeTab}-${indent.id}-${indent.indentNumber}`}
+                      indent={indent}
+                      activeTab={activeTab}
+                      columnVisibility={columnVisibility}
+                      handleGeneratePO={handleGeneratePO}
+                      handleViewHistory={handleViewHistory}
+                    />
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -854,6 +888,7 @@ export const PurchaseOrderPage: React.FC = () => {
               }}
               onConfirm={handleSubmitPO}
               indents={indents}
+              processedIndentNumbers={processedIndentNumbers}
               isSubmitting={isSubmitting}
             />
           )}
