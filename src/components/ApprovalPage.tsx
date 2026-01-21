@@ -23,6 +23,13 @@ const formatTimestamp = (date: Date): string => {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 };
 
+// Helper to round numbers
+const formatNumber = (value: number | string | undefined) => {
+  if (value === undefined || value === null || value === "") return value;
+  const num = Number(value);
+  return isNaN(num) ? value : Math.round(num);
+};
+
 // small debounce hook to avoid re-filtering on every keystroke
 function useDebounce<T>(value: T, delay = 300) {
   const [debounced, setDebounced] = React.useState(value);
@@ -1055,22 +1062,22 @@ export const ApprovalPage: React.FC = () => {
                           )}
                           {columnVisibility.moq && (
                             <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
-                              {indent.moq}
+                              {formatNumber(indent.moq)}
                             </td>
                           )}
                           {columnVisibility.maxLevel && (
                             <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
-                              {indent.maxLevel}
+                              {formatNumber(indent.maxLevel)}
                             </td>
                           )}
                           {columnVisibility.closingStock && (
                             <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
-                              {indent.closingStock}
+                              {formatNumber(indent.closingStock)}
                             </td>
                           )}
                           {columnVisibility.reorderQuantityPcs && (
                             <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
-                              {indent.reorderQuantityPcs}
+                              {formatNumber(indent.reorderQuantityPcs)}
                             </td>
                           )}
                           {columnVisibility.approved && (
@@ -1103,17 +1110,17 @@ export const ApprovalPage: React.FC = () => {
                           )}
                           {columnVisibility.sizeML && (
                             <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
-                              {indent.sizeML}
+                              {formatNumber(indent.sizeML)}
                             </td>
                           )}
                           {columnVisibility.bottlesPerCase && (
                             <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
-                              {indent.bottlesPerCase}
+                              {formatNumber(indent.bottlesPerCase)}
                             </td>
                           )}
                           {columnVisibility.reorderQuantityBox && (
                             <td className="px-4 py-4 text-gray-600 whitespace-nowrap">
-                              {indent.reorderQuantityBox}
+                              {formatNumber(indent.reorderQuantityBox)}
                             </td>
                           )}
                           {columnVisibility.shopName && (
@@ -1229,13 +1236,13 @@ export const ApprovalPage: React.FC = () => {
                     <div>
                       <div className="text-xs text-gray-500">Closing Stock</div>
                       <div className="font-medium text-gray-900">
-                        {indent.closingStock}
+                        {formatNumber(indent.closingStock)}
                       </div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-500">Reorder (Pcs)</div>
                       <div className="font-medium text-gray-900">
-                        {indent.reorderQuantityPcs}
+                        {formatNumber(indent.reorderQuantityPcs)}
                       </div>
                     </div>
                   </div>
