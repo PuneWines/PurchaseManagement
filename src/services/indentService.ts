@@ -208,6 +208,14 @@ interface IndentService {
     secondaryKeys?: { skuCode?: string; itemName?: string },
     rowIndexOverride?: number
   ): Promise<void>;
+  updateIndentsBulk(
+    items: {
+      id: string;
+      updates: Partial<IndentItem>;
+      secondaryKeys?: { skuCode?: string; itemName?: string };
+      rowIndexOverride?: number;
+    }[]
+  ): Promise<void>;
   getMasterCompanies(): Promise<string[]>;
   getTransporterNames(): Promise<string[]>;
   getApprovalNames(): Promise<string[]>;
@@ -331,6 +339,16 @@ const fetchProcessedPOIndentNumbers = async (): Promise<Set<string>> => {
   }
 };
 
+// -----------------------------------------------------------------
+// Cache for Indents
+// -----------------------------------------------------------------
+let _indentsCache: { data: IndentItem[]; timestamp: number } | null = null;
+const CACHE_TTL = 30000; // 30 seconds
+
+export const clearIndentCache = () => {
+  _indentsCache = null;
+};
+
 export const indentService: IndentService = {
   async getColumnAData(): Promise<string[]> {
     return fetchColumnAData();
@@ -342,6 +360,13 @@ export const indentService: IndentService = {
     return fetchProcessedPOIndentNumbers();
   },
   async getIndents(): Promise<IndentItem[]> {
+    // Return from cache if valid
+    const now = Date.now();
+    if (_indentsCache && now - _indentsCache.timestamp < CACHE_TTL) {
+      console.log("Serving indents from cache");
+      return _indentsCache.data;
+    }
+
     if (!SCRIPT_URL) {
       console.warn(
         "Using mock data because Google Script URL is not configured"
@@ -904,6 +929,9 @@ export const indentService: IndentService = {
             poQty: mapped[0].poQty
           });
         }
+        
+        // Update cache
+        _indentsCache = { data: mapped, timestamp: Date.now() };
         
         return mapped;
       }
@@ -1700,9 +1728,155 @@ export const indentService: IndentService = {
           // Don't throw error here - main update might have succeeded
         }
       }
+      // Clear cache after successful update
+      clearIndentCache();
     } catch (error) {
       console.error("Error in updateIndent:", error);
       throw error;
+    }
+  },
+
+  async updateIndentsBulk(
+    items: {
+      id: string;
+      updates: Partial<IndentItem>;
+      secondaryKeys?: { skuCode?: string; itemName?: string };
+      rowIndexOverride?: number;
+    }[]
+  ): Promise<void> {
+    if (!SCRIPT_URL) return;
+
+    try {
+      // 1. Single Fetch for Header mapping (Optimization)
+      const headerUrl =
+        buildUrl("fetch") + "&range=" + encodeURIComponent(`${SHEET_NAME}!1:1`);
+      const res = await fetch(headerUrl);
+      let headerRow: any[] = [];
+      if (res.ok) {
+        const json = await res.json();
+        headerRow =
+          (Array.isArray(json)
+            ? json[0]
+            : json.values?.[0] || json.data?.[0]) || [];
+      }
+
+      const normalizeKey = (k: string) =>
+        k.toString().toLowerCase().replace(/[()\s_]/g, "");
+      const findColInHeader = (headerArr: any[], alts: string[]) => {
+        const hn = headerArr.map((h) => normalizeKey(String(h ?? "")));
+        for (const a of alts) {
+          const idx = hn.indexOf(normalizeKey(a));
+          if (idx !== -1) return idx;
+        }
+        return -1;
+      };
+
+      const patApproval = [
+        "Actual 1",
+        "actual1",
+        "Approval Date",
+        "approval_date",
+        "approvedOn",
+        "APPROVAL_DATE",
+      ];
+      const patStatus = [
+        "Shop Manager Status",
+        "shop_manager_status",
+        "managerStatus",
+      ];
+      const patRemarks = ["Remarks", "remarks", "Notes", "notes"];
+      const patApprovalName = [
+        "Approval Name",
+        "approval_name",
+        "ApprovalName",
+        "APPROVAL_NAME",
+      ];
+
+      const colApproval = findColInHeader(headerRow, patApproval);
+      const colStatus = findColInHeader(headerRow, patStatus);
+      const colRemarks = findColInHeader(headerRow, patRemarks);
+      const colApprovalName = findColInHeader(headerRow, patApprovalName);
+
+      const allOps: Promise<any>[] = [];
+
+      for (const item of items) {
+        const { id, updates, rowIndexOverride } = item;
+        const rowIndex = rowIndexOverride || -1;
+        if (rowIndex <= 0) continue;
+
+        const markUrl = buildUrl("markdeleted");
+        const setCell = (colIdx0: number, value: any) => {
+          if (colIdx0 < 0 || value === undefined) return;
+          const params = new URLSearchParams();
+          params.set("action", "markdeleted");
+          params.set("sheet", SHEET_NAME);
+          if (SHEET_ID) params.set("sheetId", SHEET_ID);
+          params.set("rowIndex", String(rowIndex));
+          params.set("columnIndex", String(colIdx0 + 1));
+          params.set("value", String(value));
+          allOps.push(
+            fetch(markUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/x-www-form-urlencoded; charset=UTF-8",
+                Accept: "application/json",
+              },
+              body: params.toString(),
+              mode: "cors",
+            })
+          );
+        };
+
+        // Approval fields updates
+        if (colApproval >= 0) setCell(colApproval, updates.approvalDate);
+        if (colStatus >= 0) setCell(colStatus, updates.shopManagerStatus);
+        if (colRemarks >= 0) setCell(colRemarks, updates.remarks);
+        const appNameCol = colApprovalName >= 0 ? colApprovalName : 42;
+        setCell(appNameCol, updates.approvalName);
+
+        // Approval sheet insertion (Parallel request preparation)
+        if (updates.isApproval) {
+          const approvalUrl = new URL(
+            SCRIPT_URL,
+            typeof window !== "undefined" ? window.location.origin : undefined
+          );
+          approvalUrl.searchParams.set("action", "insert");
+          approvalUrl.searchParams.set("sheet", "Approval");
+          if (SHEET_ID) approvalUrl.searchParams.set("sheetId", SHEET_ID);
+          const approvalRowData = [
+            new Date().toISOString().slice(0, 19).replace("T", " "),
+            id,
+            updates.shopName || "",
+            updates.shopManagerStatus || "",
+            updates.remarks || "",
+            updates.approvalName || "",
+          ];
+          approvalUrl.searchParams.set(
+            "rowData",
+            JSON.stringify(approvalRowData)
+          );
+          allOps.push(
+            fetch(approvalUrl.toString(), {
+              method: "POST",
+              headers: { Accept: "application/json" },
+              mode: "cors",
+            })
+          );
+        }
+      }
+
+      // Parallel Requests Execution
+      if (allOps.length > 0) {
+        await Promise.all(allOps);
+        console.log(
+          `✅ Bulk update completed for ${items.length} items (${allOps.length} parallel requests)`
+        );
+      }
+      clearIndentCache();
+    } catch (e) {
+      console.error("Bulk update failed:", e);
+      throw e;
     }
   },
 

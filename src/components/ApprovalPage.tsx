@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Search,
   Filter,
@@ -110,6 +110,8 @@ export const ApprovalPage: React.FC = () => {
   const [endDate, setEndDate] = useState("");
   const [filterOptions, setFilterOptions] = useState<string[]>([]);
   const [filterSearch, setFilterSearch] = useState("");
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const filterRef = useRef<HTMLDivElement | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [selectedIndent, setSelectedIndent] = useState<IndentItem | null>(null);
   const [shopManagerStatus, setShopManagerStatus] = useState("Approved");
@@ -208,8 +210,6 @@ export const ApprovalPage: React.FC = () => {
           // If fetching mapping fails, proceed with original data
           setIndents(filtered);
         }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load indents");
       } finally {
         setLoading(false);
       }
@@ -291,15 +291,14 @@ export const ApprovalPage: React.FC = () => {
       return;
     }
 
-    setIsApproving(true); // 🔒 lock UI
+    setIsApproving(true);
 
     const currentDate = formatTimestamp(new Date());
-
     const itemsToApprove = indents.filter((indent) =>
       selectedIds.has(getIndentKey(indent))
     );
 
-    const updates = {
+    const commonUpdates = {
       shopManagerStatus: "Approved",
       remarks: "",
       approvalDate: currentDate,
@@ -309,35 +308,30 @@ export const ApprovalPage: React.FC = () => {
       actualTimestamp1: currentDate,
     };
 
-    // Store previous state for rollback
-    const itemsApprovingKeys = Array.from(selectedIds);
+    // Prepare items for bulk update
+    const bulkItems = itemsToApprove.map((item) => ({
+      id: item.indentNumber,
+      updates: {
+        ...commonUpdates,
+        shopName: item.shopName,
+        isApproval: true,
+      },
+      secondaryKeys: {
+        skuCode: item.skuCode,
+        itemName: item.itemName,
+      },
+      rowIndexOverride: item._rowIndex,
+    }));
 
     try {
-      // ⏳ Sheet writes FIRST
-      await Promise.all(
-        itemsToApprove.map((item) =>
-          indentService.updateIndent(
-            item.indentNumber,
-            {
-              ...updates,
-              shopName: item.shopName,
-              isApproval: true,
-              indentNumber: item.indentNumber,
-            },
-            {
-              skuCode: item.skuCode,
-              itemName: item.itemName,
-            },
-            item._rowIndex
-          )
-        )
-      );
+      // Use optimized bulk update service
+      await indentService.updateIndentsBulk(bulkItems);
 
-      // ✅ ONLY after successful sheet write, update UI and show animation
+      // Update UI state after successful backend update
       setIndents((prev) =>
         prev.map((indent) =>
           selectedIds.has(getIndentKey(indent))
-            ? { ...indent, ...updates }
+            ? { ...indent, ...commonUpdates }
             : indent
         )
       );
@@ -345,12 +339,8 @@ export const ApprovalPage: React.FC = () => {
       setSelectedIds(new Set());
       setShowSuccessAnimation(true);
       setActiveTab("history");
-
     } catch (error) {
       console.error("Bulk approval failed:", error);
-      // Show error but don't need to revert since we didn't update setIndents optimistically
-      setSelectedIds(new Set(itemsApprovingKeys));
-      
       setError("Failed to approve. Sheet update did not complete.");
       setTimeout(() => setError(""), 5000);
     } finally {
@@ -448,6 +438,18 @@ export const ApprovalPage: React.FC = () => {
       setFilterOptions([]);
     }
   }, [filterField, indents]);
+
+  // Close filter dropdown when clicking outside
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (filterRef.current && target && !filterRef.current.contains(target)) {
+        setShowFilterDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
 
 
   // Filter indents based on tab
@@ -737,18 +739,20 @@ export const ApprovalPage: React.FC = () => {
                 <ChevronDown className="absolute right-2 top-1/2 w-4 h-4 text-gray-400 -translate-y-1/2 pointer-events-none" />
               </div>
               {filterField && (
-                <div className="relative">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      placeholder={`Search ${filterField.replace(
-                        "Name",
-                        ""
-                      )}...`}
-                      value={filterSearch}
-                      onChange={(e) => setFilterSearch(e.target.value)}
-                      className="px-3 py-2 pr-8 w-40 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
+                  <div ref={filterRef} className="relative">
+                    <div className="relative">
+                        <input
+                          type="text"
+                          placeholder={`Search ${filterField.replace(
+                            "Name",
+                            ""
+                          )}...`}
+                          value={filterSearch}
+                          onChange={(e) => setFilterSearch(e.target.value)}
+                          onFocus={() => setShowFilterDropdown(true)}
+                          onClick={() => setShowFilterDropdown(true)}
+                          className="px-3 py-2 pr-8 w-40 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
                     <Search className="absolute right-2 top-1/2 w-4 h-4 text-gray-400 -translate-y-1/2" />
                   </div>
 
@@ -767,7 +771,7 @@ export const ApprovalPage: React.FC = () => {
                   )}
 
                   {/* Dropdown with searchable options */}
-                  {filterOptions.length > 0 && (
+                  {showFilterDropdown && filterOptions.length > 0 && (
                     <div className="overflow-auto absolute z-10 mt-1 w-full max-h-60 bg-white rounded-lg border border-gray-200 shadow-lg">
                       {filterOptions
                         .filter((option: string) =>
@@ -784,6 +788,7 @@ export const ApprovalPage: React.FC = () => {
                             onClick={() => {
                               setFilterValue(option);
                               setFilterSearch(option);
+                              setShowFilterDropdown(false);
                             }}
                           >
                             {option}

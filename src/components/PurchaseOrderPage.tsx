@@ -21,6 +21,13 @@ const hasValue = (s?: string) => typeof s === "string" && s.trim() !== "";
 const isProcessed = (i: any, processedSet: Set<string>) => 
   hasValue(i.transporterName) || hasValue(i.poNumber) || i.isPO === true || processedSet.has(i.indentNumber);
 
+// Helper to round numbers
+const formatNumber = (value: number | string | undefined) => {
+  if (value === undefined || value === null || value === "") return "-";
+  const num = Number(value);
+  return isNaN(num) ? value : Math.round(num);
+};
+
 interface POIndentItem {
   id: string;
   indentNumber: string;
@@ -285,14 +292,14 @@ const POGenerateModal: React.FC<POGenerateModalProps> = ({
                         </td>
                         <td className="px-4 py-2 border border-gray-300">
                           {i.bottlesPerCase && i.reorderQuantityBox
-                            ? i.bottlesPerCase * i.reorderQuantityBox
-                            : i.reorderQuantityPcs || 0}
+                            ? Math.round(i.bottlesPerCase * i.reorderQuantityBox)
+                            : formatNumber(i.reorderQuantityPcs)}
                         </td>
                         <td className="px-4 py-2 border border-gray-300">
-                          {i.reorderQuantityBox}
+                          {formatNumber(i.reorderQuantityBox)}
                         </td>
                         <td className="px-4 py-2 border border-gray-300">
-                          {i.sizeML}
+                          {formatNumber(i.sizeML)}
                         </td>
                         <td className="px-4 py-2 border border-gray-300">
                           <button
@@ -465,18 +472,18 @@ const TableRow: React.FC<TableRowProps> = ({
     {columnVisibility.brandName && (
       <td className="px-6 py-4 min-w-[150px]">{indent.brandName}</td>
     )}
-    {columnVisibility.moq && <td className="px-6 py-4">{indent.moq}</td>}
+    {columnVisibility.moq && <td className="px-6 py-4">{formatNumber(indent.moq)}</td>}
     {columnVisibility.maxLevel && (
-      <td className="px-6 py-4">{indent.maxLevel}</td>
+      <td className="px-6 py-4">{formatNumber(indent.maxLevel)}</td>
     )}
     {columnVisibility.closingStock && (
-      <td className="px-6 py-4">{indent.closingStock}</td>
+      <td className="px-6 py-4">{formatNumber(indent.closingStock)}</td>
     )}
     {columnVisibility.reorderQuantityPcs && (
       <td className="px-6 py-4">
         {indent.bottlesPerCase && indent.reorderQuantityBox
-          ? indent.bottlesPerCase * indent.reorderQuantityBox
-          : indent.reorderQuantityPcs || 0}
+          ? Math.round(indent.bottlesPerCase * indent.reorderQuantityBox)
+          : formatNumber(indent.reorderQuantityPcs)}
       </td>
     )}
     {columnVisibility.approved && (
@@ -495,10 +502,10 @@ const TableRow: React.FC<TableRowProps> = ({
       <td className="px-6 py-4 min-w-[150px]">{indent.traderName}</td>
     )}
     {columnVisibility.sizeML && (
-      <td className="px-6 py-4">{indent.sizeML}</td>
+      <td className="px-6 py-4">{formatNumber(indent.sizeML)}</td>
     )}
     {columnVisibility.reorderQuantityBox && (
-      <td className="px-6 py-4">{indent.reorderQuantityBox}</td>
+      <td className="px-6 py-4">{formatNumber(indent.reorderQuantityBox)}</td>
     )}
     {columnVisibility.shopName && (
       <td className="px-6 py-4 min-w-[150px]">{indent.shopName}</td>
@@ -763,7 +770,7 @@ export const PurchaseOrderPage: React.FC = () => {
   };
 
   return (
-    <div className="p-4 min-h-screen bg-gray-50 md:p-6 w-full lg:w-[calc(100vw-279px)] overflow-hidden ">
+    <div className="p-4 min-h-screen bg-gray-50 md:p-6 w-full lg:w-[calc(100vw-280px)]">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 md:text-3xl">
           PO Management

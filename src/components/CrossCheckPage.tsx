@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Package,
   Image as ImageIcon,
   CheckCircle,
   X,
   FileText,
+  ChevronDown,
+  Search,
 } from "lucide-react";
 import { indentService } from "../services/indentService";
 import { storageUtils } from "../utils/storage";
@@ -122,8 +124,12 @@ export const CrossCheckPage: React.FC = () => {
     "itemName" | "shopName" | "traderName" | ""
   >("");
   const [filterValue, setFilterValue] = useState("");
+  const [filterOptions, setFilterOptions] = useState<string[]>([]);
+  const [filterSearch, setFilterSearch] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const filterRef = useRef<HTMLDivElement | null>(null);
 
   // Column filter states
   const [showColumnFilter, setShowColumnFilter] = useState(false);
@@ -202,7 +208,7 @@ export const CrossCheckPage: React.FC = () => {
             ...googleItem,
             ...localItem,
             liftingData: localItem.liftingData || googleItem.liftingData,
-            liftingDate: localItem.liftingDate || googleItem.liftingDate || googleItem.actualAF,
+            liftingDate: localItem.liftingDate || (googleItem as IndentItem).liftingDate || googleItem.actualAF,
             receiveStatus: localItem.receiveStatus || googleItem.receiveStatus,
             receivedQty: localItem.receivedQty || googleItem.receivedQty,
             difference: localItem.difference || googleItem.difference,
@@ -214,7 +220,7 @@ export const CrossCheckPage: React.FC = () => {
         }
         return {
           ...googleItem,
-          liftingDate: googleItem.liftingDate || googleItem.actualAF,
+          liftingDate: (googleItem as IndentItem).liftingDate || googleItem.actualAF,
         };
       });
 
@@ -247,6 +253,38 @@ export const CrossCheckPage: React.FC = () => {
   useEffect(() => {
     fetchIndents();
   }, [fetchIndents]);
+
+  // Update filter options when filter field changes
+  useEffect(() => {
+    if (filterField) {
+      const uniqueValues = Array.from(
+        new Set(
+          indents
+            .map((indent) => {
+              const value = indent[filterField as keyof IndentItem];
+              return value ? String(value).trim() : null;
+            })
+            .filter((value): value is string => value !== null && value !== "")
+        )
+      ).sort();
+      setFilterOptions(uniqueValues);
+      setFilterSearch("");
+    } else {
+      setFilterOptions([]);
+    }
+  }, [filterField, indents]);
+
+  // Close filter dropdown when clicking outside
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (filterRef.current && target && !filterRef.current.contains(target)) {
+        setShowFilterDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
 
   const columnLabels = {
     action: "Action",
@@ -326,19 +364,30 @@ export const CrossCheckPage: React.FC = () => {
     });
   };
 
-  const pendingIndents = filterIndents(basePendingIndents);
-  const historyIndents = filterIndents(baseHistoryIndents);
+  const pendingIndents = useMemo(() => filterIndents(basePendingIndents), [basePendingIndents, searchTerm, filterField, filterValue, startDate, endDate]);
+  const historyIndents = useMemo(() => filterIndents(baseHistoryIndents), [baseHistoryIndents, searchTerm, filterField, filterValue, startDate, endDate]);
   const currentIndents =
     activeTab === "pending" ? pendingIndents : historyIndents;
 
   // -----------------------------------------------------------------
   // Calculate Difference
   // -----------------------------------------------------------------
-  const calculateDifference = (receivedQty: string) => {
-    if (!selectedIndent?.liftingData?.qty) return "";
-    const expected = parseFloat(selectedIndent.liftingData.qty) || 0;
+  const calculateDifference = (receivedQty: string, indent: IndentItem | null = selectedIndent) => {
+    if (!indent) return "";
+    const isSpecialShop = 
+      indent.shopName === "Kunal Ulwe Wines" || 
+      indent.shopName === "Balaji";
+
     const received = parseFloat(receivedQty) || 0;
-    return (expected - received).toString();
+
+    if (isSpecialShop) {
+      const orderQty = Number(indent.reorderQuantityPcs) || 0;
+      return (orderQty - received).toString();
+    } else {
+      if (!indent.liftingData?.qty) return "";
+      const expected = parseFloat(indent.liftingData.qty) || 0;
+      return (expected - received).toString();
+    }
   };
 
   const handleReceivedQtyChange = (value: string) => {
@@ -357,7 +406,7 @@ export const CrossCheckPage: React.FC = () => {
     setSelectedIndent(indent);
     setReceiveData({
       receivedQty: indent.liftingData?.qty || "",
-      difference: calculateDifference(indent.liftingData?.qty || ""),
+      difference: calculateDifference(indent.liftingData?.qty || "", indent),
       receiveRemarks: indent.receiveRemarks || "",
     });
     setShowModal(true);
@@ -502,7 +551,7 @@ export const CrossCheckPage: React.FC = () => {
           {/* Pending Receiving Qty - From column AS */}
           {columnVisibility.pendingReceivingQty && activeTab === "history" && (
             <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-              {indent.pendingReceivingQty || "-"}
+              {indent.pendingReceivingQty ? Math.round(Number(indent.pendingReceivingQty)) : "-"}
             </td>
           )}
 
@@ -579,7 +628,7 @@ export const CrossCheckPage: React.FC = () => {
           {/* Show Diff only in history tab */}
           {activeTab === "history" && columnVisibility.difference && (
             <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-              {indent.difference || "-"}
+              {indent.difference ? Math.round(Number(indent.difference)) : "-"}
             </td>
           )}
 
@@ -609,7 +658,7 @@ export const CrossCheckPage: React.FC = () => {
   }
 
   return (
-    <div className="p-4 min-h-screen bg-gray-50 md:p-6 w-full lg:w-[calc(100vw-279px)] overflow-hidden">
+    <div className="p-4 min-h-screen bg-gray-50 md:p-6 w-full lg:w-[calc(100vw-280px)]">
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 md:text-3xl">
@@ -746,35 +795,87 @@ export const CrossCheckPage: React.FC = () => {
         </div>
 
         {/* Filter Dropdown */}
-        <div className="flex gap-2">
-          <select
-            value={filterField}
-            onChange={(e) =>
-              setFilterField(
-                e.target.value as "itemName" | "shopName" | "traderName" | ""
-              )
-            }
-            className="px-3 py-2 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">Filter by...</option>
-            <option value="itemName">Item Name</option>
-            <option value="shopName">Shop Name</option>
-            <option value="traderName">Trader Name</option>
-          </select>
+        <div className="flex gap-2 items-center">
+          <div className="relative">
+            <select
+              value={filterField}
+              onChange={(e) =>
+                setFilterField(
+                  e.target.value as
+                    | "itemName"
+                    | "shopName"
+                    | "traderName"
+                    | ""
+                )
+              }
+              className="px-3 py-2 pr-8 w-40 text-sm bg-white rounded-lg border border-gray-300 appearance-none outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Filter by...</option>
+              <option value="itemName">Item Name</option>
+              <option value="shopName">Shop Name</option>
+              <option value="traderName">Trader Name</option>
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 w-4 h-4 text-gray-400 -translate-y-1/2 pointer-events-none" />
+          </div>
           {filterField && (
-            <input
-              type="text"
-              placeholder={`Filter by ${
-                filterField === "itemName"
-                  ? "Item"
-                  : filterField === "shopName"
-                  ? "Shop"
-                  : "Trader"
-              } Name`}
-              value={filterValue}
-              onChange={(e) => setFilterValue(e.target.value)}
-              className="px-3 py-2 w-40 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
+            <div ref={filterRef} className="relative">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder={`Search ${filterField.replace(
+                    "Name",
+                    ""
+                  )}...`}
+                  value={filterSearch}
+                  onChange={(e) => setFilterSearch(e.target.value)}
+                  onFocus={() => setShowFilterDropdown(true)}
+                  onClick={() => setShowFilterDropdown(true)}
+                  className="px-3 py-2 pr-8 w-40 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <Search className="absolute right-2 top-1/2 w-4 h-4 text-gray-400 -translate-y-1/2" />
+              </div>
+
+              {/* Clear Filter Button */}
+              {(filterValue || filterSearch) && (
+                <button
+                  onClick={() => {
+                    setFilterValue("");
+                    setFilterSearch("");
+                  }}
+                  className="absolute -top-2 -right-2 p-1 text-xs text-white bg-red-500 rounded-full transition-colors hover:bg-red-600"
+                  title="Clear filter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+
+              {/* Dropdown with searchable options */}
+              {showFilterDropdown && filterOptions.length > 0 && (
+                <div className="overflow-auto absolute z-50 mt-1 w-64 max-h-60 bg-white rounded-lg border border-gray-200 shadow-lg">
+                  {filterOptions
+                    .filter((option: string) =>
+                      option
+                        .toLowerCase()
+                        .includes(filterSearch.toLowerCase())
+                    )
+                    .map((option: string) => (
+                      <div
+                        key={option}
+                        className={`px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 ${
+                          filterValue === option ? "bg-blue-100" : ""
+                        }`}
+                        onClick={() => {
+                          setFilterValue(option);
+                          setFilterSearch(option);
+                          setShowFilterDropdown(false);
+                        }}
+                      >
+                        {option}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -871,7 +972,7 @@ export const CrossCheckPage: React.FC = () => {
 
       {/* Desktop Table */}
       <div className="hidden bg-white rounded-xl border border-gray-200 shadow-lg lg:block">
-        <div className="overflow-x-auto w-full lg:w-[calc(100vw-16rem)]">
+        <div className="overflow-x-auto w-full">
           <div className="max-h-[70vh] overflow-y-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="sticky top-0 z-10 bg-gray-100">
@@ -1189,9 +1290,11 @@ export const CrossCheckPage: React.FC = () => {
                 <input
                   type="text"
                   value={receiveData.difference}
-                  readOnly
-                  className="p-3 w-full bg-gray-50 rounded-lg border"
-                  placeholder="Auto-calculated"
+                  onChange={(e) =>
+                    setReceiveData((p) => ({ ...p, difference: e.target.value }))
+                  }
+                  className="p-3 w-full rounded-lg border focus:ring-2 focus:ring-purple-500"
+                  placeholder="Difference"
                 />
               </div>
 
