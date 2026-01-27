@@ -37,6 +37,13 @@ const formatDateOnly = (dateString?: string): string => {
   }
 };
 
+// Helper to check if a string is truly empty (null, undefined, or whitespace)
+const isTrulyEmpty = (val?: string): boolean => {
+  if (!val) return true;
+  const trimmed = val.trim();
+  return trimmed === "" || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined";
+};
+
 // ---------------------------------------------------------------------
 // Indent Item Interface
 // ---------------------------------------------------------------------
@@ -101,6 +108,154 @@ interface ColumnVisibility {
   pendingReceivingQty: boolean;
   liftingDate: boolean;
 }
+
+// ---------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------
+const TableRow = React.memo(
+  ({
+    indent,
+    activeTab,
+    onCrossCheck,
+    onViewImage,
+    columnVisibility,
+  }: {
+    indent: IndentItem;
+    activeTab: "pending" | "history";
+    onCrossCheck: (indent: IndentItem) => void;
+    onViewImage: (url: string) => void;
+    columnVisibility: ColumnVisibility;
+  }) => {
+    return (
+      <tr className="hover:bg-gray-50">
+        {/* Action */}
+        {columnVisibility.action && (
+          <td className="px-6 py-4 whitespace-nowrap">
+            {activeTab === "pending" && isTrulyEmpty(indent.actualAL) ? (
+              <button
+                onClick={() => onCrossCheck(indent)}
+                className="flex gap-1 items-center px-3 py-1 text-sm text-white bg-purple-600 rounded-lg transition hover:bg-purple-700"
+              >
+                <Package className="w-4 h-4" />
+                <span>Receive</span>
+              </button>
+            ) : (
+              <span className="text-sm text-gray-500">Received</span>
+            )}
+          </td>
+        )}
+
+        {/* Indent Number */}
+        {columnVisibility.indentNumber && (
+          <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">
+            {indent.indentNumber}
+          </td>
+        )}
+
+        {/* Shop */}
+        {columnVisibility.shopName && (
+          <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
+            {indent.shopName}
+          </td>
+        )}
+
+        {/* Trader Name */}
+        {columnVisibility.traderName && (
+          <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
+            {indent.traderName}
+          </td>
+        )}
+        
+        {/* Pending Receiving Qty - From column AS */}
+        {columnVisibility.pendingReceivingQty && activeTab === "history" && (
+          <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
+            {indent.pendingReceivingQty ? Math.round(Number(indent.pendingReceivingQty)) : "-"}
+          </td>
+        )}
+
+        {/* Lifting Date - From column AF */}
+        {columnVisibility.liftingDate && (
+          <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
+            {formatDateOnly(indent.liftingDate || indent.actualAF)}
+          </td>
+        )}
+
+        {/* Item */}
+        {columnVisibility.itemName && (
+          <td className="px-6 py-4 text-sm text-gray-500">
+            <div>
+              <div className="font-medium">{indent.itemName}</div>
+              <div className="text-xs text-gray-400">
+                {indent.sizes?.join(", ") || "-"}
+              </div>
+            </div>
+          </td>
+        )}
+
+        {/* Transporter */}
+        {columnVisibility.transporterName && (
+          <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
+            {indent.transporterName || "-"}
+          </td>
+        )}
+
+        {/* Transport Copy */}
+        {columnVisibility.transportCopy && (
+          <td className="px-6 py-4 text-sm whitespace-nowrap">
+            {indent.liftingData?.transportCopy ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onViewImage(indent.liftingData!.transportCopy!);
+                }}
+                className="flex gap-2 items-center font-medium text-blue-600 hover:text-blue-800"
+              >
+                <ImageIcon className="w-4 h-4" />
+                View
+              </button>
+            ) : (
+              <span className="text-gray-400">-</span>
+            )}
+          </td>
+        )}
+
+        {/* Bill Copy */}
+        {columnVisibility.billCopy && (
+          <td className="px-6 py-4 text-sm whitespace-nowrap">
+            {indent.liftingData?.billCopy ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onViewImage(indent.liftingData!.billCopy!);
+                }}
+                className="flex gap-2 items-center font-medium text-blue-600 hover:text-blue-800"
+              >
+                <ImageIcon className="w-4 h-4" />
+                View
+              </button>
+            ) : (
+              <span className="text-gray-400">-</span>
+            )}
+          </td>
+        )}
+
+        {/* Difference */}
+        {activeTab === "history" && columnVisibility.difference && (
+          <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
+            {indent.difference || "-"}
+          </td>
+        )}
+
+        {/* Remarks */}
+        {activeTab === "history" && columnVisibility.remarks && (
+          <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
+            {indent.receiveRemarks || "-"}
+          </td>
+        )}
+      </tr>
+    );
+  }
+);
 
 // ---------------------------------------------------------------------
 // Main Component
@@ -214,8 +369,8 @@ export const CrossCheckPage: React.FC = () => {
             difference: localItem.difference || googleItem.difference,
             receiveRemarks:
               localItem.receiveRemarks || googleItem.receiveRemarks,
-            actualAF: localItem.actualAF || googleItem.actualAF,
-            actualAL: localItem.actualAL || googleItem.actualAL,
+            actualAF: !isTrulyEmpty(localItem.actualAF) ? localItem.actualAF : googleItem.actualAF,
+            actualAL: !isTrulyEmpty(localItem.actualAL) ? localItem.actualAL : googleItem.actualAL,
           };
         }
         return {
@@ -254,12 +409,94 @@ export const CrossCheckPage: React.FC = () => {
     fetchIndents();
   }, [fetchIndents]);
 
-  // Update filter options when filter field changes
+  // Nuclear Fix: Derive current indents directly based on activeTab
+  const currentIndents = useMemo(() => {
+    // 1. Get base list for the active tab
+    const baseList = activeTab === "pending" 
+      ? indents.filter((i) => !isTrulyEmpty(i.plannedAK) && isTrulyEmpty(i.actualAL))
+      : indents.filter((i) => !isTrulyEmpty(i.plannedAK) && !isTrulyEmpty(i.actualAL));
+
+    // 2. Apply Search & Filters
+    const filtered = baseList.filter((indent) => {
+      const searchLower = searchTerm.toLowerCase();
+      const searchMatch =
+        indent.indentNumber?.toLowerCase().includes(searchLower) ||
+        indent.skuCode?.toLowerCase().includes(searchLower) ||
+        indent.itemName?.toLowerCase().includes(searchLower) ||
+        indent.brandName?.toLowerCase().includes(searchLower) ||
+        indent.traderName?.toLowerCase().includes(searchLower) ||
+        indent.shopName?.toLowerCase().includes(searchLower) ||
+        indent.orderBy?.toLowerCase().includes(searchLower);
+
+      let fieldMatch = true;
+      if (filterField && (filterValue.trim() || filterSearch.trim())) {
+        const filterText = (filterValue.trim() || filterSearch.trim()).toLowerCase();
+        const fieldValueLower = indent[filterField]?.toLowerCase() || "";
+        fieldMatch = fieldValueLower.includes(filterText);
+      }
+
+      let dateMatch = true;
+      if (startDate || endDate) {
+        const indentDate = indent.actualAL
+          ? new Date(indent.actualAL)
+          : indent.liftingData?.liftingCompletedAt
+          ? new Date(indent.liftingData.liftingCompletedAt)
+          : null;
+
+        if (indentDate) {
+          if (startDate && new Date(startDate) > indentDate) {
+            dateMatch = false;
+          }
+          if (endDate) {
+            const endOfDay = new Date(endDate);
+            endOfDay.setHours(23, 59, 59, 999);
+            if (endOfDay < indentDate) {
+              dateMatch = false;
+            }
+          }
+        } else {
+          dateMatch = !startDate && !endDate;
+        }
+      }
+
+      return searchMatch && fieldMatch && dateMatch;
+    });
+
+    // 3. Apply Stable Sorting
+    return filtered.sort((a, b) => {
+      if (activeTab === "pending") {
+        const numA = parseInt(a.indentNumber?.replace(/\D/g, "") || "0");
+        const numB = parseInt(b.indentNumber?.replace(/\D/g, "") || "0");
+        return numA - numB;
+      } else {
+        return (b.actualAL || "").localeCompare(a.actualAL || "");
+      }
+    });
+  }, [indents, activeTab, searchTerm, filterField, filterValue, filterSearch, startDate, endDate]);
+
+  // For tab counts only (simplified)
+  const pendingCount = useMemo(() => 
+    indents.filter((i) => !isTrulyEmpty(i.plannedAK) && isTrulyEmpty(i.actualAL)).length, 
+  [indents]);
+  const historyCount = useMemo(() => 
+    indents.filter((i) => !isTrulyEmpty(i.plannedAK) && !isTrulyEmpty(i.actualAL)).length, 
+  [indents]);
+
+  // Clear filter when changing tabs
+  useEffect(() => {
+    setFilterValue("");
+    setFilterSearch("");
+    setSearchTerm("");
+    setStartDate("");
+    setEndDate("");
+  }, [activeTab]);
+
+  // Update filter options when filter field or active tab changes
   useEffect(() => {
     if (filterField) {
       const uniqueValues = Array.from(
         new Set(
-          indents
+          currentIndents
             .map((indent) => {
               const value = indent[filterField as keyof IndentItem];
               return value ? String(value).trim() : null;
@@ -272,7 +509,7 @@ export const CrossCheckPage: React.FC = () => {
     } else {
       setFilterOptions([]);
     }
-  }, [filterField, indents]);
+  }, [filterField, activeTab, currentIndents]);
 
   // Close filter dropdown when clicking outside
   useEffect(() => {
@@ -308,74 +545,13 @@ export const CrossCheckPage: React.FC = () => {
   };
 
   // -----------------------------------------------------------------
-  // Filters based on Planned AK & Actual AL
-  // -----------------------------------------------------------------
-  const basePendingIndents = indents.filter(
-    (i) => i.plannedAK?.trim() && !i.actualAL?.trim()
-  );
-  const baseHistoryIndents = indents.filter((i) => i.actualAL?.trim());
-
-  // Apply search and filter
-  const filterIndents = (indents: IndentItem[]) => {
-    return indents.filter((indent) => {
-      const searchLower = searchTerm.toLowerCase();
-      const searchMatch =
-        indent.indentNumber?.toLowerCase().includes(searchLower) ||
-        indent.skuCode?.toLowerCase().includes(searchLower) ||
-        indent.itemName?.toLowerCase().includes(searchLower) ||
-        indent.brandName?.toLowerCase().includes(searchLower) ||
-        indent.traderName?.toLowerCase().includes(searchLower) ||
-        indent.shopName?.toLowerCase().includes(searchLower) ||
-        indent.orderBy?.toLowerCase().includes(searchLower);
-
-      let fieldMatch = true;
-      if (filterField && filterValue.trim()) {
-        const fieldValueLower = indent[filterField]?.toLowerCase() || "";
-        fieldMatch = fieldValueLower.includes(filterValue.toLowerCase().trim());
-      }
-
-      // Date range filtering
-      let dateMatch = true;
-      if (startDate || endDate) {
-        const indentDate = indent.actualAL
-          ? new Date(indent.actualAL)
-          : indent.liftingData?.liftingCompletedAt
-          ? new Date(indent.liftingData.liftingCompletedAt)
-          : null;
-
-        if (indentDate) {
-          if (startDate && new Date(startDate) > indentDate) {
-            dateMatch = false;
-          }
-          if (endDate) {
-            const endOfDay = new Date(endDate);
-            endOfDay.setHours(23, 59, 59, 999);
-            if (endOfDay < indentDate) {
-              dateMatch = false;
-            }
-          }
-        } else {
-          // If there's no timestamp, only include if no date range is set
-          dateMatch = !startDate && !endDate;
-        }
-      }
-
-      return searchMatch && fieldMatch && dateMatch;
-    });
-  };
-
-  const pendingIndents = useMemo(() => filterIndents(basePendingIndents), [basePendingIndents, searchTerm, filterField, filterValue, startDate, endDate]);
-  const historyIndents = useMemo(() => filterIndents(baseHistoryIndents), [baseHistoryIndents, searchTerm, filterField, filterValue, startDate, endDate]);
-  const currentIndents =
-    activeTab === "pending" ? pendingIndents : historyIndents;
-
-  // -----------------------------------------------------------------
   // Calculate Difference
   // -----------------------------------------------------------------
   const calculateDifference = (receivedQty: string, indent: IndentItem | null = selectedIndent) => {
     if (!indent) return "";
     const isSpecialShop = 
       indent.shopName === "Kunal Ulwe Wines" || 
+      indent.shopName === "Balaji Wines" ||
       indent.shopName === "Balaji";
 
     const received = parseFloat(receivedQty) || 0;
@@ -493,157 +669,6 @@ export const CrossCheckPage: React.FC = () => {
     }
   };
 
-  // -----------------------------------------------------------------
-  // Table Row Component
-  // -----------------------------------------------------------------
-  const TableRow = React.memo(
-    ({
-      indent,
-      activeTab,
-      onCrossCheck,
-      onViewImage,
-    }: {
-      indent: IndentItem;
-      activeTab: "pending" | "history";
-      onCrossCheck: (indent: IndentItem) => void;
-      onViewImage: (url: string) => void;
-    }) => {
-      return (
-        <tr className="hover:bg-gray-50">
-          {/* Action */}
-          {columnVisibility.action && (
-            <td className="px-6 py-4 whitespace-nowrap">
-              {activeTab === "pending" ? (
-                <button
-                  onClick={() => onCrossCheck(indent)}
-                  className="flex gap-1 items-center px-3 py-1 text-sm text-white bg-purple-600 rounded-lg transition hover:bg-purple-700"
-                >
-                  <Package className="w-4 h-4" />
-                  <span>Receive</span>
-                </button>
-              ) : (
-                <span className="text-sm text-gray-500">Received</span>
-              )}
-            </td>
-          )}
-
-          {/* Indent Number */}
-          {columnVisibility.indentNumber && (
-            <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">
-              {indent.indentNumber}
-            </td>
-          )}
-
-          {/* Shop */}
-          {columnVisibility.shopName && (
-            <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-              {indent.shopName}
-            </td>
-          )}
-
-          {/* Trader Name */}
-          {columnVisibility.traderName && (
-            <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-              {indent.traderName}
-            </td>
-          )}
-          
-          {/* Pending Receiving Qty - From column AS */}
-          {columnVisibility.pendingReceivingQty && activeTab === "history" && (
-            <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-              {indent.pendingReceivingQty ? Math.round(Number(indent.pendingReceivingQty)) : "-"}
-            </td>
-          )}
-
-          {/* Lifting Date - From column AF */}
-          {columnVisibility.liftingDate && (
-            <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-              {formatDateOnly(indent.liftingDate || indent.actualAF)}
-            </td>
-          )}
-
-          {/* Item */}
-          {columnVisibility.itemName && (
-            <td className="px-6 py-4 text-sm text-gray-500">
-              <div>
-                <div className="font-medium">{indent.itemName}</div>
-                <div className="text-xs text-gray-400">
-                  {indent.sizes?.join(", ") || "-"}
-                </div>
-              </div>
-            </td>
-          )}
-
-          {/* Transporter */}
-          {columnVisibility.transporterName && (
-            <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-              {indent.transporterName || "-"}
-            </td>
-          )}
-
-          {/* Transport Copy */}
-          {columnVisibility.transportCopy && (
-            <td className="px-6 py-4 text-sm whitespace-nowrap">
-              {indent.liftingData?.transportCopy ? (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (indent.liftingData?.transportCopy) {
-                      onViewImage(indent.liftingData.transportCopy);
-                    }
-                  }}
-                  className="flex gap-1 items-center font-medium text-blue-600 hover:text-blue-800"
-                >
-                  <ImageIcon className="w-4 h-4" />
-                  View
-                </button>
-              ) : (
-                <span className="text-gray-400">—</span>
-              )}
-            </td>
-          )}
-
-          {/* Bill Copy */}
-          {columnVisibility.billCopy && (
-            <td className="px-6 py-4 text-sm whitespace-nowrap">
-              {indent.liftingData?.billCopy ? (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (indent.liftingData?.billCopy) {
-                      onViewImage(indent.liftingData.billCopy);
-                    }
-                  }}
-                  className="flex gap-1 items-center font-medium text-blue-600 hover:text-blue-800"
-                >
-                  <ImageIcon className="w-4 h-4" />
-                  View
-                </button>
-              ) : (
-                <span className="text-gray-400">—</span>
-              )}
-            </td>
-          )}
-
-          {/* Show Diff only in history tab */}
-          {activeTab === "history" && columnVisibility.difference && (
-            <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-              {indent.difference ? Math.round(Number(indent.difference)) : "-"}
-            </td>
-          )}
-
-          {/* History Columns */}
-          {activeTab === "history" && columnVisibility.remarks && (
-            <td className="px-6 py-4 text-sm text-gray-500">
-              {indent.receiveRemarks || "-"}
-            </td>
-          )}
-        </tr>
-      );
-    }
-  );
-
-  TableRow.displayName = "TableRow";
 
   // -----------------------------------------------------------------
   // Render
@@ -951,7 +976,7 @@ export const CrossCheckPage: React.FC = () => {
           >
             <div className="flex gap-2 items-center">
               <Package className="w-4 h-4" />
-              <span>Pending ({pendingIndents.length})</span>
+              <span>Pending ({pendingCount})</span>
             </div>
           </button>
           <button
@@ -964,7 +989,7 @@ export const CrossCheckPage: React.FC = () => {
           >
             <div className="flex gap-2 items-center">
               <CheckCircle className="w-4 h-4" />
-              <span>History ({historyIndents.length})</span>
+              <span>History ({historyCount})</span>
             </div>
           </button>
         </nav>
@@ -1040,7 +1065,7 @@ export const CrossCheckPage: React.FC = () => {
                   )}
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody key={activeTab} className="bg-white divide-y divide-gray-200">
                 {currentIndents.map((indent) => (
                   <TableRow
                     key={indent.id}
@@ -1048,6 +1073,7 @@ export const CrossCheckPage: React.FC = () => {
                     activeTab={activeTab}
                     onCrossCheck={handleCrossCheck}
                     onViewImage={handleViewImage}
+                    columnVisibility={columnVisibility}
                   />
                 ))}
               </tbody>
@@ -1065,8 +1091,8 @@ export const CrossCheckPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Mobile Cards */}
-      <div className="space-y-4 lg:hidden">
+      {/* Mobile Cards - Nuclear Fix: key={activeTab} forces full list remount */}
+      <div key={activeTab} className="space-y-4 lg:hidden">
         {currentIndents.map((indent) => (
           <div key={indent.id} className="p-4 bg-white rounded-xl shadow-lg">
             <div className="flex justify-between items-start mb-3">
@@ -1078,7 +1104,7 @@ export const CrossCheckPage: React.FC = () => {
                   {new Date(indent.orderDate).toLocaleDateString()}
                 </div>
               </div>
-              {activeTab === "pending" && (
+              {activeTab === "pending" && isTrulyEmpty(indent.actualAL) && (
                 <button
                   onClick={() => handleCrossCheck(indent)}
                   className="flex items-center gap-1 px-3 py-1.5 text-sm text-white bg-purple-600 rounded-lg hover:bg-purple-700"

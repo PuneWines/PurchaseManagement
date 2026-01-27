@@ -433,8 +433,13 @@ export const indentService: IndentService = {
             k.replace(/\s+/g, "_"),
           ];
           for (const c of variants) {
-            if (row[c] !== undefined && row[c] !== null && row[c] !== "")
-              return row[c];
+            const val = row[c];
+            if (val !== undefined && val !== null) {
+              const s = String(val).trim();
+              if (s !== "" && s.toLowerCase() !== "null" && s.toLowerCase() !== "undefined") {
+                return val;
+              }
+            }
           }
         }
         // Column index fallback e.g. "#19" => use __col19 if present

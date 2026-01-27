@@ -437,12 +437,34 @@ export const GetLiftingPage = () => {
     fetchIndents();
   }, []);
 
-  // Update filter options when filter field changes
+  // Filters based on Planned AE & Actual AF
+  const basePendingIndents = useMemo(() => indents.filter((i) => {
+    const hasPlanned = i.plannedAE && String(i.plannedAE).trim().length > 0;
+    const hasActual = i.actualAF && String(i.actualAF).trim().length > 0;
+    return hasPlanned && !hasActual;
+  }), [indents]);
+
+  const baseHistoryIndents = useMemo(() => indents.filter((i) => {
+    const hasActual = i.actualAF && String(i.actualAF).trim().length > 0;
+    return hasActual; // If AF is not null, show in history
+  }), [indents]);
+
+  // Clear filter when changing tabs
+  useEffect(() => {
+    setFilterValue("");
+    setFilterSearch("");
+    setSearchTerm("");
+    setStartDate("");
+    setEndDate("");
+  }, [activeTab]);
+
+  // Update filter options when filter field or active tab changes
   useEffect(() => {
     if (filterField) {
+      const sourceIndents = activeTab === "pending" ? basePendingIndents : baseHistoryIndents;
       const uniqueValues = Array.from(
         new Set(
-          indents
+          sourceIndents
             .map((indent) => {
               const value = indent[filterField as keyof IndentItem];
               return value ? String(value).trim() : null;
@@ -455,7 +477,7 @@ export const GetLiftingPage = () => {
     } else {
       setFilterOptions([]);
     }
-  }, [filterField, indents]);
+  }, [filterField, activeTab, basePendingIndents, baseHistoryIndents]);
 
   // Close filter dropdown when clicking outside
   useEffect(() => {
@@ -497,21 +519,6 @@ export const GetLiftingPage = () => {
     }));
   };
 
-  // -----------------------------------------------------------------
-  // Filters (No duplicate logic)
-  // -----------------------------------------------------------------
-
-  console.log("Total indents loaded:", indents);
-  const basePendingIndents = indents.filter((i) => {
-    const hasPlanned = i.plannedAE && String(i.plannedAE).trim().length > 0;
-    const hasActual = i.actualAF && String(i.actualAF).trim().length > 0;
-    return hasPlanned && !hasActual;
-  });
-  const baseHistoryIndents = indents.filter((i) => {
-    const hasActual = i.actualAF && String(i.actualAF).trim().length > 0;
-    return hasActual; // If AF is not null, show in history
-  });
-
   // Apply search and filter
   const filterIndents = (indents: IndentItem[]) => {
     return indents.filter((indent) => {
@@ -526,9 +533,10 @@ export const GetLiftingPage = () => {
         indent.orderBy?.toLowerCase().includes(searchLower);
 
       let fieldMatch = true;
-      if (filterField && filterValue.trim()) {
+      if (filterField && (filterValue.trim() || filterSearch.trim())) {
+        const filterText = (filterValue.trim() || filterSearch.trim()).toLowerCase();
         const fieldValueLower = indent[filterField]?.toLowerCase() || "";
-        fieldMatch = fieldValueLower.includes(filterValue.toLowerCase().trim());
+        fieldMatch = fieldValueLower.includes(filterText);
       }
 
       // Date range filtering
@@ -561,8 +569,8 @@ export const GetLiftingPage = () => {
     });
   };
 
-  const pendingIndents = useMemo(() => filterIndents(basePendingIndents), [basePendingIndents, searchTerm, filterField, filterValue, startDate, endDate]);
-  const historyIndents = useMemo(() => filterIndents(baseHistoryIndents), [baseHistoryIndents, searchTerm, filterField, filterValue, startDate, endDate]);
+  const pendingIndents = useMemo(() => filterIndents(basePendingIndents), [basePendingIndents, searchTerm, filterField, filterValue, filterSearch, startDate, endDate]);
+  const historyIndents = useMemo(() => filterIndents(baseHistoryIndents), [baseHistoryIndents, searchTerm, filterField, filterValue, filterSearch, startDate, endDate]);
   
   const currentIndents =
     activeTab === "pending" ? pendingIndents : historyIndents;

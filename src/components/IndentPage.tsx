@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Search, Filter } from "lucide-react";
 import { indentService, IndentItem } from "../services/indentService";
 import { storageUtils } from "../utils/storage";
@@ -36,6 +36,10 @@ export const IndentPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterField, setFilterField] = useState<'itemName' | 'shopName' | 'traderName' | ''>('');
   const [filterValue, setFilterValue] = useState("");
+  const [filterOptions, setFilterOptions] = useState<string[]>([]);
+  const [filterSearch, setFilterSearch] = useState("");
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const filterRef = React.useRef<HTMLDivElement | null>(null);
   const [showColumnFilter, setShowColumnFilter] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>({
     indentNumber: true,
@@ -90,6 +94,38 @@ export const IndentPage: React.FC = () => {
     fetchIndents();
   }, []);
 
+  // Update filter options when filter field or indents change
+  useEffect(() => {
+    if (filterField) {
+      const uniqueValues = Array.from(
+        new Set(
+          indents
+            .map((indent) => {
+              const value = indent[filterField as keyof IndentItem];
+              return value ? String(value).trim() : null;
+            })
+            .filter((value): value is string => value !== null && value !== "")
+        )
+      ).sort();
+      setFilterOptions(uniqueValues);
+      setFilterSearch("");
+    } else {
+      setFilterOptions([]);
+    }
+  }, [filterField, indents]);
+
+  // Close filter dropdown when clicking outside
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (filterRef.current && target && !filterRef.current.contains(target)) {
+        setShowFilterDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
+
   /* ------------------------------------------------------------------ */
   /*  COLUMN LABELS & TOGGLE                                            */
   /* ------------------------------------------------------------------ */
@@ -122,27 +158,30 @@ export const IndentPage: React.FC = () => {
   /* ------------------------------------------------------------------ */
   /*  FILTER BY SEARCH TERM                                             */
   /* ------------------------------------------------------------------ */
-  const filteredIndents = indents.filter((indent) => {
-    const term = searchTerm.toLowerCase();
-    const searchMatch = (
-      indent.indentNumber.toLowerCase().includes(term) ||
-      indent.skuCode.toLowerCase().includes(term) ||
-      indent.itemName.toLowerCase().includes(term) ||
-      indent.brandName.toLowerCase().includes(term) ||
-      indent.traderName.toLowerCase().includes(term) ||
-      indent.liquor.toLowerCase().includes(term) ||
-      indent.shopName.toLowerCase().includes(term) ||
-      indent.orderBy.toLowerCase().includes(term)
-    );
+  const filteredIndents = useMemo(() => {
+    return indents.filter((indent) => {
+      const term = searchTerm.toLowerCase();
+      const searchMatch = (
+        indent.indentNumber.toLowerCase().includes(term) ||
+        indent.skuCode.toLowerCase().includes(term) ||
+        indent.itemName.toLowerCase().includes(term) ||
+        indent.brandName.toLowerCase().includes(term) ||
+        indent.traderName.toLowerCase().includes(term) ||
+        indent.liquor.toLowerCase().includes(term) ||
+        indent.shopName.toLowerCase().includes(term) ||
+        indent.orderBy.toLowerCase().includes(term)
+      );
 
-    let fieldMatch = true;
-    if (filterField && filterValue.trim()) {
-      const fieldValue = indent[filterField]?.toLowerCase() || '';
-      fieldMatch = fieldValue.includes(filterValue.toLowerCase().trim());
-    }
+      let fieldMatch = true;
+      if (filterField && (filterValue.trim() || filterSearch.trim())) {
+        const filterText = (filterValue.trim() || filterSearch.trim()).toLowerCase();
+        const fieldValue = indent[filterField]?.toLowerCase() || "";
+        fieldMatch = fieldValue.includes(filterText);
+      }
 
-    return searchMatch && fieldMatch;
-  });
+      return searchMatch && fieldMatch;
+    });
+  }, [indents, searchTerm, filterField, filterValue, filterSearch]);
 
   /* ------------------------------------------------------------------ */
   /*  UI                                                                */
@@ -224,25 +263,97 @@ export const IndentPage: React.FC = () => {
             </div>
 
             {/* Filter Dropdown */}
-            <div className="flex gap-2">
-              <select
-                value={filterField}
-                onChange={(e) => setFilterField(e.target.value as 'itemName' | 'shopName' | 'traderName' | '')}
-                className="py-2 px-3 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Filter by...</option>
-                <option value="itemName">Item Name</option>
-                <option value="shopName">Shop Name</option>
-                <option value="traderName">Trader Name</option>
-              </select>
+            <div className="flex gap-2 items-center">
+              <div className="relative">
+                <select
+                  value={filterField}
+                  onChange={(e) =>
+                    setFilterField(
+                      e.target.value as "itemName" | "shopName" | "traderName" | ""
+                    )
+                  }
+                  className="px-3 py-2 pr-8 w-40 text-sm bg-white rounded-lg border border-gray-300 appearance-none outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Filter by...</option>
+                  <option value="itemName">Item Name</option>
+                  <option value="shopName">Shop Name</option>
+                  <option value="traderName">Trader Name</option>
+                </select>
+                <div className="absolute right-2 top-1/2 w-4 h-4 text-gray-400 -translate-y-1/2 pointer-events-none">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </div>
+
               {filterField && (
-                <input
-                  type="text"
-                  placeholder={`Filter by ${filterField === 'itemName' ? 'Item' : filterField === 'shopName' ? 'Shop' : 'Trader'} Name`}
-                  value={filterValue}
-                  onChange={(e) => setFilterValue(e.target.value)}
-                  className="py-2 px-3 w-40 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
+                <div ref={filterRef} className="relative">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder={`Search ${filterField.replace("Name", "")}...`}
+                      value={filterSearch}
+                      onChange={(e) => setFilterSearch(e.target.value)}
+                      onFocus={() => setShowFilterDropdown(true)}
+                      onClick={() => setShowFilterDropdown(true)}
+                      className="px-3 py-2 pr-8 w-40 text-sm bg-white rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <div className="absolute right-2 top-1/2 w-4 h-4 text-gray-400 -translate-y-1/2">
+                      <Search className="w-4 h-4" />
+                    </div>
+                  </div>
+
+                  {/* Clear Filter Button */}
+                  {(filterValue || filterSearch) && (
+                    <button
+                      onClick={() => {
+                        setFilterValue("");
+                        setFilterSearch("");
+                      }}
+                      className="absolute -top-2 -right-2 p-1 text-xs text-white bg-red-500 rounded-full transition-colors hover:bg-red-600"
+                      title="Clear filter"
+                    >
+                      <svg
+                        className="w-3 h-3"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </button>
+                  )}
+
+                  {/* Dropdown with searchable options */}
+                  {showFilterDropdown && filterOptions.length > 0 && (
+                    <div className="overflow-auto absolute z-50 mt-1 w-64 max-h-60 bg-white rounded-lg border border-gray-200 shadow-lg">
+                      {filterOptions
+                        .filter((option: string) =>
+                          option.toLowerCase().includes(filterSearch.toLowerCase())
+                        )
+                        .map((option: string) => (
+                          <div
+                            key={option}
+                            className={`px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 ${
+                              filterValue === option ? "bg-blue-100" : ""
+                            }`}
+                            onClick={() => {
+                              setFilterValue(option);
+                              setFilterSearch(option);
+                              setShowFilterDropdown(false);
+                            }}
+                          >
+                            {option}
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 

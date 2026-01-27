@@ -419,12 +419,34 @@ export const ApprovalPage: React.FC = () => {
     }
   };
 
-  // Update filter options when filter field changes
+  const hasValue = (s?: string) => typeof s === "string" && s.trim() !== "";
+
+  // Pending: Planned1 has value AND Actual 1 (approvalDate) is empty
+  const pendingIndents = useMemo(() => indents.filter(
+    (indent) => hasValue(indent.plannedDate) && !hasValue(indent.approvalDate)
+  ), [indents]);
+
+  // History: Planned1 has value AND Actual 1 (approvalDate) has value
+  const historyIndents = useMemo(() => indents.filter(
+    (indent) => hasValue(indent.plannedDate) && hasValue(indent.approvalDate)
+  ), [indents]);
+
+  // Clear filter when changing tabs
+  useEffect(() => {
+    setFilterValue("");
+    setFilterSearch("");
+    setSearchTerm("");
+    setStartDate("");
+    setEndDate("");
+  }, [activeTab]);
+
+  // Update filter options when filter field or active tab changes
   useEffect(() => {
     if (filterField) {
+      const sourceIndents = activeTab === "pending" ? pendingIndents : historyIndents;
       const uniqueValues = Array.from(
         new Set(
-          indents
+          sourceIndents
             .map((indent) => {
               const value = indent[filterField as keyof IndentItem];
               return value ? String(value).trim() : null;
@@ -437,7 +459,7 @@ export const ApprovalPage: React.FC = () => {
     } else {
       setFilterOptions([]);
     }
-  }, [filterField, indents]);
+  }, [filterField, activeTab, pendingIndents, historyIndents]);
 
   // Close filter dropdown when clicking outside
   useEffect(() => {
@@ -451,20 +473,6 @@ export const ApprovalPage: React.FC = () => {
     return () => document.removeEventListener("mousedown", handleOutside);
   }, []);
 
-
-  // Filter indents based on tab
-  // Only show items that have plannedDate (are in the approval process)
-  const hasValue = (s?: string) => typeof s === "string" && s.trim() !== "";
-
-  // Pending: Planned1 has value AND Actual 1 (approvalDate) is empty
-  const pendingIndents = indents.filter(
-    (indent) => hasValue(indent.plannedDate) && !hasValue(indent.approvalDate)
-  );
-
-  // History: Planned1 has value AND Actual 1 (approvalDate) has value
-  const historyIndents = indents.filter(
-    (indent) => hasValue(indent.plannedDate) && hasValue(indent.approvalDate)
-  );
 
   // Get current tab data
 
@@ -493,11 +501,10 @@ export const ApprovalPage: React.FC = () => {
 
       // Field filter
       let fieldMatch = true;
-      if (filterField && filterValue.trim()) {
+      if (filterField && (filterValue.trim() || filterSearch.trim())) {
+        const filterText = (filterValue.trim() || filterSearch.trim()).toLowerCase();
         const fieldValue = (indent[filterField] as unknown as string) || "";
-        fieldMatch = fieldValue
-          .toLowerCase()
-          .includes(filterValue.toLowerCase().trim());
+        fieldMatch = fieldValue.toLowerCase().includes(filterText);
       }
 
       // Date range filter
@@ -530,6 +537,7 @@ export const ApprovalPage: React.FC = () => {
     debouncedSearch,
     filterField,
     filterValue,
+    filterSearch,
     startDate,
     endDate,
   ]);
