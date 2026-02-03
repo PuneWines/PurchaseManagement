@@ -261,7 +261,9 @@ const TableRow = React.memo(
 // Main Component
 // ---------------------------------------------------------------------
 export const CrossCheckPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
+  const [activeTab, setActiveTab] = useState<"pending" | "history">(
+    (localStorage.getItem("cross_check_active_tab") as "pending" | "history") || "pending"
+  );
   const [showModal, setShowModal] = useState(false);
   const [selectedIndent, setSelectedIndent] = useState<IndentItem | null>(null);
   const [receiveData, setReceiveData] = useState({
@@ -274,16 +276,29 @@ export const CrossCheckPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(
+    localStorage.getItem("cross_check_search_term") || ""
+  );
   const [filterField, setFilterField] = useState<
     "itemName" | "shopName" | "traderName" | ""
-  >("");
-  const [filterValue, setFilterValue] = useState("");
+  >(
+    (localStorage.getItem("cross_check_filter_field") as "itemName" | "shopName" | "traderName" | "") || ""
+  );
+  const [filterValue, setFilterValue] = useState(
+    localStorage.getItem("cross_check_filter_value") || ""
+  );
   const [filterOptions, setFilterOptions] = useState<string[]>([]);
-  const [filterSearch, setFilterSearch] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [filterSearch, setFilterSearch] = useState(
+    localStorage.getItem("cross_check_filter_search") || ""
+  );
+  const [startDate, setStartDate] = useState(
+    localStorage.getItem("cross_check_start_date") || ""
+  );
+  const [endDate, setEndDate] = useState(
+    localStorage.getItem("cross_check_end_date") || ""
+  );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const filterRef = useRef<HTMLDivElement | null>(null);
 
   // Column filter states
@@ -409,6 +424,16 @@ export const CrossCheckPage: React.FC = () => {
     fetchIndents();
   }, [fetchIndents]);
 
+  // Check for success message after reload
+  useEffect(() => {
+    const msg = localStorage.getItem("cross_check_success_msg");
+    if (msg) {
+      setSuccessMessage(msg);
+      localStorage.removeItem("cross_check_success_msg");
+      setTimeout(() => setSuccessMessage(""), 5000);
+    }
+  }, []);
+
   // Nuclear Fix: Derive current indents directly based on activeTab
   const currentIndents = useMemo(() => {
     // 1. Get base list for the active tab
@@ -482,14 +507,16 @@ export const CrossCheckPage: React.FC = () => {
     indents.filter((i) => !isTrulyEmpty(i.plannedAK) && !isTrulyEmpty(i.actualAL)).length, 
   [indents]);
 
-  // Clear filter when changing tabs
+  // Persist filters to localStorage whenever they change
   useEffect(() => {
-    setFilterValue("");
-    setFilterSearch("");
-    setSearchTerm("");
-    setStartDate("");
-    setEndDate("");
-  }, [activeTab]);
+    localStorage.setItem("cross_check_active_tab", activeTab);
+    localStorage.setItem("cross_check_search_term", searchTerm);
+    localStorage.setItem("cross_check_filter_field", filterField);
+    localStorage.setItem("cross_check_filter_value", filterValue);
+    localStorage.setItem("cross_check_filter_search", filterSearch);
+    localStorage.setItem("cross_check_start_date", startDate);
+    localStorage.setItem("cross_check_end_date", endDate);
+  }, [activeTab, searchTerm, filterField, filterValue, filterSearch, startDate, endDate]);
 
   // Update filter options when filter field or active tab changes
   useEffect(() => {
@@ -505,7 +532,6 @@ export const CrossCheckPage: React.FC = () => {
         )
       ).sort();
       setFilterOptions(uniqueValues);
-      setFilterSearch("");
     } else {
       setFilterOptions([]);
     }
@@ -591,7 +617,9 @@ export const CrossCheckPage: React.FC = () => {
   const handleSubmitReceive = async () => {
     if (!selectedIndent || !receiveData.receivedQty.trim()) return;
 
-    // Optimistic update: Update local state immediately
+    setIsSubmitting(true);
+    setErrorMessage("");
+
     const now = formatTimestamp(new Date());
     const receiveStatus: "All Okay" | "Not Okay" =
       receiveData.difference === "0" ? "All Okay" : "Not Okay";
@@ -606,27 +634,17 @@ export const CrossCheckPage: React.FC = () => {
       isReceived: true,
     };
 
-    const updatedIndents = indents.map((i) =>
-      i.id === selectedIndent.id ? { ...i, ...updateData } : i
-    );
-
-    setIndents(updatedIndents);
-    setShowModal(false);
-    setSelectedIndent(null);
-    setReceiveData({ receivedQty: "", difference: "", receiveRemarks: "" });
-
-    // Show success message immediately
-    setSuccessMessage(
-      `Cross check completed successfully for indent ${selectedIndent.indentNumber}.`
-    );
-    setTimeout(() => setSuccessMessage(""), 5000);
-
     // Perform background operations
     try {
       // Update Google Sheets
       await indentService.updateIndent(selectedIndent.id, updateData);
 
-      // Update localStorage
+      // Update local state and localStorage after successful server update
+      const updatedIndents = indents.map((i) =>
+        i.id === selectedIndent.id ? { ...i, ...updateData } : i
+      );
+      setIndents(updatedIndents);
+
       const saved = localStorage.getItem("indent_approval_data");
       const localIndents: IndentItem[] = saved ? JSON.parse(saved) : [];
       const updatedLocal = localIndents.map((i) =>
@@ -637,33 +655,17 @@ export const CrossCheckPage: React.FC = () => {
         JSON.stringify(updatedLocal)
       );
 
-      console.log("Cross check submission completed successfully");
-
-      // Automatically refresh page after successful submission to reload updated data
-      setTimeout(() => {
-        window.location.reload();
-      }, 500); // 0.5 second delay for faster feedback
+      // Set success message and reload
+      localStorage.setItem("cross_check_success_msg", `Cross check completed successfully for indent ${selectedIndent.indentNumber}.`);
+      
+      setShowModal(false);
+      setSelectedIndent(null);
+      setReceiveData({ receivedQty: "", difference: "", receiveRemarks: "" });
+      
+      window.location.reload();
     } catch (error: any) {
       console.error("Submit error:", error);
-      // Revert optimistic update on failure
-      const revertedIndents = indents.map((i) => {
-        if (i.id === selectedIndent.id) {
-          return {
-            ...i,
-            actualAL: i.actualAL || "",
-            receivedQty: i.receivedQty || "",
-            difference: i.difference || "",
-            receiveRemarks: i.receiveRemarks || "",
-            receiveStatus:
-              (i.receiveStatus as "All Okay" | "Not Okay" | undefined) ||
-              undefined,
-            isReceived: false,
-          };
-        }
-        return i;
-      });
-      setIndents(revertedIndents);
-      setSuccessMessage(""); // Clear success message
+      setIsSubmitting(false);
       setErrorMessage("Failed to complete cross check. Please try again.");
       setTimeout(() => setErrorMessage(""), 5000);
     }
@@ -824,15 +826,17 @@ export const CrossCheckPage: React.FC = () => {
           <div className="relative">
             <select
               value={filterField}
-              onChange={(e) =>
+              onChange={(e) => {
                 setFilterField(
                   e.target.value as
                     | "itemName"
                     | "shopName"
                     | "traderName"
                     | ""
-                )
-              }
+                );
+                setFilterValue("");
+                setFilterSearch("");
+              }}
               className="px-3 py-2 pr-8 w-40 text-sm bg-white rounded-lg border border-gray-300 appearance-none outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
               <option value="">Filter by...</option>
@@ -1355,10 +1359,17 @@ export const CrossCheckPage: React.FC = () => {
               </button>
               <button
                 onClick={handleSubmitReceive}
-                disabled={!receiveData.receivedQty.trim()}
-                className="px-6 py-2 w-full text-white bg-purple-600 rounded-lg md:w-auto hover:bg-purple-700 disabled:opacity-50"
+                disabled={!receiveData.receivedQty.trim() || isSubmitting}
+                className="flex gap-2 justify-center items-center px-6 py-2 w-full text-white bg-purple-600 rounded-lg md:w-auto hover:bg-purple-700 disabled:opacity-50"
               >
-                Submit Receive
+                {isSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-white animate-spin border-t-transparent" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  "Submit Receive"
+                )}
               </button>
             </div>
           </div>

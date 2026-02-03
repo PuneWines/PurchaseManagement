@@ -1658,67 +1658,27 @@ export const indentService: IndentService = {
               );
             };
 
-            // Update PO fields
-            await setPOCell(
-              pos.colActualTimestamp1,
-              updates.actualTimestamp1,
-              "Actual 3"
-            );
-            await setPOCell(
-              pos.colTransportName,
-              updates.transporterName,
-              "Transport Name"
-            );
-            await setPOCell(pos.colPOCopyLink, updates.poCopyLink, "PO Copy");
-            await setPOCell(pos.colPONumber, updates.poNumber, "Po No.");
-            await setPOCell(pos.colPOQty, updates.poQty, "PO Qty");
-            await setPOCell(
-              pos.colRemarksFrontend,
-              updates.remarksFrontend,
-              "Remarks1"
-            );
-
-            // Lifting fields
-            await setPOCell(pos.colActual4AF, updates.actualAF, "Actual 4");
-            await setPOCell(
-              pos.colTransportCopy,
-              updates.liftingData?.transportCopy,
-              "Transport Copy"
-            );
-            await setPOCell(
-              pos.colLiftingQty,
-              updates.liftingData?.qty,
-              "Lifting Qty"
-            );
-            await setPOCell(
-              pos.colBillCopy,
-              updates.liftingData?.billCopy,
-              "Bill Copy"
-            );
-
-            // Cross-check fields
-            await setPOCell(pos.colPlannedAK, updates.plannedAK, "Planned 5");
-            await setPOCell(pos.colActualAL, updates.actualAL, "Actual 5");
-            await setPOCell(
-              pos.colReceiveStatus,
-              updates.receiveStatus,
-              "Receive Status"
-            );
-            await setPOCell(
-              pos.colReceivedQty,
-              updates.receivedQty,
-              "Received Qty"
-            );
-            await setPOCell(
-              pos.colDifference,
-              updates.difference,
-              "Difference"
-            );
-            await setPOCell(
-              pos.colReceiveRemarks,
-              updates.receiveRemarks,
-              "Receive Remarks"
-            );
+            // Parallelize all updates for faster processing
+            await Promise.all([
+              setPOCell(pos.colActualTimestamp1, updates.actualTimestamp1, "Actual 3"),
+              setPOCell(pos.colTransportName, updates.transporterName, "Transport Name"),
+              setPOCell(pos.colPOCopyLink, updates.poCopyLink, "PO Copy"),
+              setPOCell(pos.colPONumber, updates.poNumber, "Po No."),
+              setPOCell(pos.colPOQty, updates.poQty, "PO Qty"),
+              setPOCell(pos.colRemarksFrontend, updates.remarksFrontend, "Remarks1"),
+              // Lifting fields
+              setPOCell(pos.colActual4AF, updates.actualAF, "Actual 4"),
+              setPOCell(pos.colTransportCopy, updates.liftingData?.transportCopy, "Transport Copy"),
+              setPOCell(pos.colLiftingQty, updates.liftingData?.qty, "Lifting Qty"),
+              setPOCell(pos.colBillCopy, updates.liftingData?.billCopy, "Bill Copy"),
+              // Cross-check fields
+              setPOCell(pos.colPlannedAK, updates.plannedAK, "Planned 5"),
+              setPOCell(pos.colActualAL, updates.actualAL, "Actual 5"),
+              setPOCell(pos.colReceiveStatus, updates.receiveStatus, "Receive Status"),
+              setPOCell(pos.colReceivedQty, updates.receivedQty, "Received Qty"),
+              setPOCell(pos.colDifference, updates.difference, "Difference"),
+              setPOCell(pos.colReceiveRemarks, updates.receiveRemarks, "Receive Remarks")
+            ]);
 
             console.log(
               "✅ PO and related fields updated via markdeleted endpoints"
